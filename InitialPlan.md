@@ -27,6 +27,7 @@ These are implementation recommendations from the planning phase, rather than in
 - Build a TypeScript Expo app with native IDKit integration for mobile verification flows.
 - Use Supabase/Postgres for profiles, handles, invitations, matching, race state, and summaries; use Realtime for race updates, server functions for service coordination, and row-level security for data access.
 - Keep World signing keys, provider credentials, and ENS registrar signing secrets on the server. Verify World proofs server-side and retain verification outcomes rather than selfie images or ID documents.
+- Give friend invite codes a 48-hour lifetime and create or redeem each code atomically, preventing more than two runners from joining one race.
 - Use openrouteservice’s hosted free routing tier. Its foot-route distance cap informed the selected workaround: generate a 5 km loop and run it twice for a 10 km race.
 - Provide setup documentation and an example environment file. Keep actual credentials out of source control.
 - Test core flows on both physical devices, including route acceptance, verification gates, opponent visibility, GPS loss, DNF handling, and deletion of precise tracks after results finalize.

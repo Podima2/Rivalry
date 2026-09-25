@@ -1,0 +1,7 @@
+project_id = "rivalry"
+
+[functions.runner-profile]
+verify_jwt = false
+
+[functions.friend-races]
+verify_jwt = false
