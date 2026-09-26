@@ -173,8 +173,8 @@ export default {
       if (membershipError) return jsonResponse({ error: 'race_status_failed' }, 500);
       if (!membership) return jsonResponse({ error: 'not_a_race_participant' }, 403);
 
-      if (['countdown', 'active', 'route_review', 'ready'].includes(race.status)) {
-        // Starts a due countdown and applies inactivity and time-limit expiry.
+      if (['waiting_for_opponent', 'countdown', 'active', 'route_review', 'ready'].includes(race.status)) {
+        // Cancels an expired invite, starts a due countdown, and applies inactivity and time-limit expiry.
         const { error } = await client.rpc('expire_stale_race', { p_race_id: race.id });
         if (error) return jsonResponse({ error: 'race_status_failed' }, 500);
       }
