@@ -89,12 +89,18 @@ export default {
     if (profileError) return jsonResponse({ error: 'profile_lookup_failed' }, 500);
     if (!profile) return jsonResponse({ error: 'profile_required' }, 409);
 
+    if (body.action === 'snapshot') {
+      // Applies inactivity DNFs and the race time limit before reporting state.
+      const { error: expireError } = await client.rpc('expire_stale_race', { p_race_id: body.raceId });
+      if (expireError) return jsonResponse({ error: 'progress_lookup_failed' }, 500);
+    }
+
     const { data: race, error: raceError } = await client.from('races')
       .select('id, mode, status, distance_km, started_at').eq('id', body.raceId).maybeSingle();
     if (raceError) return jsonResponse({ error: 'race_lookup_failed' }, 500);
     if (!race || !['friends', 'strangers'].includes(race.mode)) return jsonResponse({ error: 'race_unavailable' }, 404);
     const { data: participants, error: participantsError } = await client.from('race_participants')
-      .select('profile_id, state, route_coordinates, route_distance_m, progress_m, progress_anchor_latitude, progress_anchor_longitude, off_route_count, elapsed_ms, result_valid')
+      .select('profile_id, state, route_coordinates, route_distance_m, progress_m, progress_anchor_latitude, progress_anchor_longitude, off_route_count, off_route_ms, gps_gap_ms, longest_gps_gap_ms, dnf_reason, elapsed_ms, result_valid')
       .eq('race_id', race.id);
     if (participantsError) return jsonResponse({ error: 'race_lookup_failed' }, 500);
     const own = participants?.find((participant) => participant.profile_id === profile.id);
@@ -127,14 +133,18 @@ export default {
       const anchor = typeof own.progress_anchor_latitude === 'number' && typeof own.progress_anchor_longitude === 'number'
         ? [own.progress_anchor_longitude, own.progress_anchor_latitude, 0] as Coordinate : null;
       const eligibleToStart = previous > 0 || anchor !== null || nearStart;
-      const onRoute = eligibleToStart && projected.nearestDistance <= Math.max(30, accuracy + 12);
+      const routeTolerance = Math.max(30, accuracy + 12);
+      const onRoute = eligibleToStart && projected.nearestDistance <= routeTolerance;
       const endpoint = own.route_coordinates[own.route_coordinates.length - 1];
-      const nearFinish = distance([longitude, latitude, 0], endpoint) <= Math.max(30, accuracy + 12);
+      const nearFinish = distance([longitude, latitude, 0], endpoint) <= routeTolerance;
       const finishCandidate = projected.best !== null && projected.best.progress >= own.route_distance_m - 25 && nearFinish;
       const movementMeters = anchor ? distance(anchor, [longitude, latitude, 0]) : 0;
       const movementNeeded = finishCandidate ? Math.max(20, accuracy * 1.3) : Math.max(40, accuracy * 2);
+      // Advance only to a matched point that is itself near the runner; being
+      // near another part of the route (a shortcut) keeps progress in place.
+      const matchedNearby = projected.best !== null && projected.best.distance <= routeTolerance;
       const advancedEnough = projected.best !== null && projected.best.progress - previous >= (finishCandidate ? 15 : 25);
-      const progress = onRoute && anchor && movementMeters >= movementNeeded && advancedEnough && projected.best
+      const progress = onRoute && anchor && matchedNearby && movementMeters >= movementNeeded && advancedEnough && projected.best
         ? Math.min(own.route_distance_m, Math.max(previous, Math.round(projected.best.progress))) : previous;
       const finish = onRoute && nearFinish && progress >= own.route_distance_m - 25;
       const { data: state, error: saveError } = await client.rpc('record_friend_race_fix', {
@@ -144,12 +154,14 @@ export default {
         p_longitude: longitude,
         p_accuracy_m: accuracy,
         p_progress_m: progress,
-        p_on_route: onRoute,
+        // null = not at the start yet: recorded, but not an off-route fix.
+        p_on_route: eligibleToStart ? onRoute : null,
         p_finish: finish,
       });
       if (saveError) return jsonResponse({ error: 'progress_save_failed' }, 500);
       return jsonResponse({ state, progressMeters: progress, onRoute,
         distanceFromRouteMeters: Number.isFinite(projected.nearestDistance) ? Math.round(projected.nearestDistance) : null,
+        distanceFromStartMeters: Math.round(distance([longitude, latitude, 0], startPoint)),
         waitingForStart: !eligibleToStart });
     }
 
@@ -195,6 +207,11 @@ export default {
         progressMeters: participant.progress_m,
         routeDistanceMeters: participant.route_distance_m,
         offRouteCount: participant.off_route_count,
+        offRouteMs: Number(participant.off_route_ms ?? 0),
+        gpsGapMs: Number(participant.gps_gap_ms ?? 0),
+        longestGpsGapMs: Number(participant.longest_gps_gap_ms ?? 0),
+        dnfReason: participant.dnf_reason,
+        resultValid: participant.result_valid,
         elapsedMs: participant.elapsed_ms,
         outcome: summaryByProfile.get(participant.profile_id)?.outcome ?? null,
         latestLocation: race.mode === 'strangers' && participant.profile_id !== profile.id

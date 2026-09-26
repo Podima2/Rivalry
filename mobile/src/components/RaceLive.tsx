@@ -94,9 +94,11 @@ export default function RaceLive({ raceId, getAccessToken, onBack }: Props) {
           const result = await sendRaceLocation(token, raceId, position.coords.latitude,
             position.coords.longitude, position.coords.accuracy ?? 100);
           if (!active) return;
-          setLocationState(result.onRoute === false
-            ? `Off route${result.distanceFromRouteMeters !== null ? ` · ${formatDistance(result.distanceFromRouteMeters)} from your planned route` : ''}. The clock keeps running.`
-            : `GPS recording · ${Math.round(position.coords.accuracy ?? 0)} m accuracy`);
+          setLocationState(result.waitingForStart
+            ? `Head to your start pin${result.distanceFromStartMeters !== null ? ` · ${formatDistance(result.distanceFromStartMeters)} away` : ''}. The clock is already running.`
+            : result.onRoute === false
+              ? `Off route${result.distanceFromRouteMeters !== null ? ` · ${formatDistance(result.distanceFromRouteMeters)} from your planned route` : ''}. The clock keeps running.`
+              : `GPS recording · ${Math.round(position.coords.accuracy ?? 0)} m accuracy`);
           if (result.state === 'finished' || result.state === 'completed') await refresh();
         } catch (cause) {
           if (!active) return;
@@ -157,6 +159,13 @@ export default function RaceLive({ raceId, getAccessToken, onBack }: Props) {
     latitudeDelta: 0.008,
     longitudeDelta: 0.008,
   } : region;
+  const resultAtRisk = self?.state === 'running' && self.offRouteMs + self.gpsGapMs > 0
+    ? `Result at risk · ${Math.round(self.offRouteMs / 1000)}s off route (limit 60s), longest GPS gap ${Math.round(self.longestGpsGapMs / 1000)}s (limit 120s).`
+    : null;
+  const endedCopy = (participant: typeof self, who: string) => participant?.dnfReason === 'inactive'
+    ? `${who} sent no GPS for 10 minutes, so the race recorded a DNF.`
+    : participant?.dnfReason === 'time_limit' ? `${who} passed the race time limit, so the race recorded a DNF.`
+      : null;
   const friendFix = friend?.latestLocation;
   const friendFixAgeSeconds = friendFix && snapshot
     ? Math.max(0, Math.floor((snapshot.receivedAt - Date.parse(friendFix.captured_at)) / 1000)) : null;
@@ -186,10 +195,10 @@ export default function RaceLive({ raceId, getAccessToken, onBack }: Props) {
         </View>
         <Text style={styles.eyebrow}>{snapshot?.status === 'completed' ? 'RACE RESULT' : `LIVE ${isStrangerRace ? 'STRANGER' : 'FRIEND'} RACE · ${snapshot?.distanceKm ?? '—'} KM`}</Text>
         <Text accessibilityRole="header" style={styles.title}>{snapshot?.status === 'completed'
-          ? self?.outcome === 'win' ? 'You won.' : self?.outcome === 'draw' ? 'It’s a draw.' : self?.outcome === 'loss' ? `Your ${isStrangerRace ? 'opponent' : 'friend'} won.` : self?.outcome === 'dnf' ? 'Race ended.' : 'Race finished.'
+          ? self?.outcome === 'win' ? 'You won.' : self?.outcome === 'draw' ? 'It’s a draw.' : self?.outcome === 'loss' ? `Your ${isStrangerRace ? 'opponent' : 'friend'} won.` : self?.outcome === 'dnf' ? 'Race ended.' : self?.outcome === 'invalid' ? 'Result not verified.' : 'Race finished.'
           : self?.state === 'finished' ? 'Finish reached.' : self?.state === 'dnf' ? 'Race ended.' : 'Run your route.'}</Text>
         <Text style={styles.copy}>{snapshot?.status === 'completed'
-          ? 'Both runners are done. Precise GPS points were deleted after the result was saved.'
+          ? `${endedCopy(self, 'You') ?? (self?.outcome === 'invalid' ? 'Your GPS track had too much time off route or without signal to verify the finish. ' : '')}${endedCopy(friend, `@${friend?.handle ?? 'Your opponent'}`) ? `${endedCopy(friend, `@${friend?.handle ?? 'Your opponent'}`)} ` : ''}Both runners are done. Precise GPS points were deleted after the result was saved.`
           : self?.state === 'finished' ? `Your time: ${formatTime(self.elapsedMs)}. Waiting for @${friend?.handle ?? 'your opponent'} to finish.`
             : self?.state === 'dnf' ? `DNF recorded. @${friend?.handle ?? 'Your opponent'} can keep running.`
             : isStrangerRace ? 'Keep Rivalry open for live GPS updates. Your opponent sees progress, never your position.'
@@ -212,6 +221,7 @@ export default function RaceLive({ raceId, getAccessToken, onBack }: Props) {
         ) : <ActivityIndicator color={colors.vermilion} />}
 
         {self?.state === 'running' ? <Text accessibilityRole="alert" style={[styles.gpsState, locationState.includes('recording') && styles.gpsGood]}>{locationState}</Text> : null}
+        {resultAtRisk ? <Text style={styles.gpsState}>{resultAtRisk}</Text> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
 
         {region && coordinates.length > 1 ? (
@@ -249,7 +259,7 @@ export default function RaceLive({ raceId, getAccessToken, onBack }: Props) {
             <Text style={styles.quitText}>{quitting ? 'Ending race…' : 'End my race · DNF'}</Text>
           </Pressable>
         ) : null}
-        <Text style={styles.footnote}>Live tracking currently requires Rivalry to stay in the foreground. GPS gaps and route deviations keep the clock running; repeated deviations can invalidate a result.</Text>
+        <Text style={styles.footnote}>Live tracking currently requires Rivalry to stay in the foreground. GPS gaps and route deviations keep the clock running. More than 60s off route, a GPS gap over 2 minutes, or 10 minutes without GPS (a DNF) means the result can’t be verified.</Text>
       </ScrollView>
     </SafeAreaView>
   );

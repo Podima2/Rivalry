@@ -673,7 +673,7 @@ export default function HomeScreen() {
                 : strangerRaceStatus.status === 'verification'
                   ? strangerRaceStatus.distanceKm === 10
                     ? 'Both runners need a fresh Selfie Check and an Official ID credential. The ID credential is unavailable in this Sandbox setup.'
-                    : strangerSelf?.selfieVerified ? 'Your Selfie Check passed. Waiting for your opponent.' : 'Complete a fresh Selfie Check for this match before the countdown.'
+                    : strangerSelf?.selfieVerified ? 'Your Selfie Check passed. Waiting for your opponent; if they don’t verify within 6 minutes, you return to the queue.' : 'Complete a fresh Selfie Check within 6 minutes, or this match is cancelled.'
                   : strangerRaceStatus.status === 'countdown'
                     ? `Verified Sandbox race starts in ${strangerCountdownSeconds} seconds.`
                     : strangerRaceStatus.status === 'active'

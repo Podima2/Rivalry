@@ -96,8 +96,9 @@ export default {
       return jsonResponse({ status });
     }
 
-    if (race.status === 'countdown') {
-      const { error } = await client.rpc('advance_friend_race_start', { p_race_id: race.id });
+    if (['countdown', 'active', 'route_review', 'ready', 'verification'].includes(race.status)) {
+      // Starts a due countdown and applies verification, inactivity, and time-limit expiry.
+      const { error } = await client.rpc('expire_stale_race', { p_race_id: race.id });
       if (error) return jsonResponse({ error: 'race_status_failed' }, 500);
     }
     const { data: currentRace, error: currentError } = await client.from('races')

@@ -17,6 +17,11 @@ export type RaceProgressSnapshot = {
     progressMeters: number;
     routeDistanceMeters: number;
     offRouteCount: number;
+    offRouteMs: number;
+    gpsGapMs: number;
+    longestGpsGapMs: number;
+    dnfReason: 'quit' | 'inactive' | 'time_limit' | null;
+    resultValid: boolean | null;
     elapsedMs: number | null;
     outcome: 'win' | 'loss' | 'draw' | 'dnf' | 'invalid' | null;
     latestLocation: { latitude: number; longitude: number; accuracy_m: number; captured_at: string; on_route: boolean } | null;
@@ -55,7 +60,9 @@ export async function sendRaceLocation(accessToken: string, raceId: string, lati
   return {
     state: typeof body.state === 'string' ? body.state : 'running',
     onRoute: body.onRoute === true,
+    waitingForStart: body.waitingForStart === true,
     distanceFromRouteMeters: typeof body.distanceFromRouteMeters === 'number' ? body.distanceFromRouteMeters : null,
+    distanceFromStartMeters: typeof body.distanceFromStartMeters === 'number' ? body.distanceFromStartMeters : null,
   };
 }
 
