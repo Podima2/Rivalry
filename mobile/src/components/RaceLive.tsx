@@ -11,7 +11,7 @@ const colors = {
   vermilion: '#E24B35', green: '#4E6A54', yellow: '#A3721F',
 };
 
-type Props = { raceId: string; getAccessToken: () => Promise<string | null>; onBack: () => void; onDone: () => void };
+type Props = { raceId: string; getAccessToken: () => Promise<string | null>; onBack?: () => void; onDone: () => void };
 
 function routeRegion(coordinates: [number, number, number][]): Region {
   const latitude = coordinates.map((coordinate) => coordinate[1]);
@@ -204,7 +204,7 @@ export default function RaceLive({ raceId, getAccessToken, onBack, onDone }: Pro
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.topbar}>
-          <Pressable accessibilityRole="button" onPress={onBack}><Text style={styles.back}>← RACE HOME</Text></Pressable>
+          {onBack ? <Pressable accessibilityRole="button" onPress={onBack}><Text style={styles.back}>← RACE HOME</Text></Pressable> : <View />}
           <Text style={styles.wordmark}>RIVALRY</Text>
         </View>
         <Text style={styles.eyebrow}>{snapshot?.status === 'completed' ? 'RACE RESULT' : `LIVE ${isStrangerRace ? 'STRANGER' : 'FRIEND'} RACE · ${snapshot?.distanceKm ?? '—'} KM`}</Text>

@@ -9,6 +9,7 @@ export type StrangerRaceStatus = {
   distanceKm: 1 | 3 | 5 | 10;
   scheduledStartAt: string | null;
   startedAt: string | null;
+  verificationDeadline: string | null;
   serverTime: string | null;
   receivedAt: number;
   participants: {

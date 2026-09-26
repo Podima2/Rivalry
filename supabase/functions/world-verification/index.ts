@@ -76,16 +76,17 @@ async function startAttempt(
     const { data: race, error: raceError } = await client
       .from('races').select('id, mode, distance_km, status').eq('id', raceId).maybeSingle();
     if (raceError) return jsonResponse({ error: 'race_lookup_failed' }, 500);
-    if (!race || race.mode !== 'strangers' || race.status !== 'verification') {
+    // A matched stranger race is the product event that needs trust: before two
+    // strangers share a start time and live progress, each proves they are a
+    // real, unique person present right now. Selfie Check is the only credential.
+    if (!race || race.mode !== 'strangers' || !['route_review', 'ready', 'verification'].includes(race.status)) {
       return jsonResponse({ error: 'race_verification_unavailable' }, 409);
     }
-    if (checkKind === 'official_id' && race.distance_km <= 6) {
-      return jsonResponse({ error: 'official_id_not_required' }, 400);
-    }
+    if (checkKind !== 'selfie') return jsonResponse({ error: 'official_id_not_required' }, 400);
     const { data: participant, error: participantError } = await client
       .from('race_participants').select('state').eq('race_id', raceId).eq('profile_id', profileId).maybeSingle();
     if (participantError) return jsonResponse({ error: 'race_lookup_failed' }, 500);
-    if (!participant || participant.state !== 'ready') return jsonResponse({ error: 'race_not_ready' }, 409);
+    if (!participant) return jsonResponse({ error: 'race_not_ready' }, 409);
     const storedKind = checkKind === 'selfie' ? 'selfie' : 'official_id';
     const { data: completed, error: completedError } = await client
       .from('race_verifications').select('verified')

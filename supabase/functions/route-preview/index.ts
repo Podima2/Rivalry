@@ -126,9 +126,16 @@ export default {
     if (!profile) return jsonResponse({ error: 'profile_required' }, 409);
 
     const { data: race, error: raceError } = await client
-      .from('races').select('id, distance_km, status').eq('id', input.raceId).maybeSingle();
+      .from('races').select('id, mode, distance_km, status').eq('id', input.raceId).maybeSingle();
     if (raceError) return jsonResponse({ error: 'race_lookup_failed' }, 500);
     if (!race || race.status !== 'route_review') return jsonResponse({ error: 'race_not_ready_for_routes' }, 409);
+    if (race.mode === 'strangers') {
+      // Strangers verify before their start point goes to the route provider.
+      const { data: selfie, error: selfieError } = await client.from('race_verifications')
+        .select('verified').eq('race_id', race.id).eq('profile_id', profile.id).eq('check_kind', 'selfie').maybeSingle();
+      if (selfieError) return jsonResponse({ error: 'verification_lookup_failed' }, 500);
+      if (!selfie?.verified) return jsonResponse({ error: 'verification_required' }, 409);
+    }
 
     const { data: participant, error: participantError } = await client
       .from('race_participants')

@@ -121,6 +121,10 @@ export async function setFriendStartReady(accessToken: string, raceId: string, r
   return result.status;
 }
 
+export async function leaveFriendRace(accessToken: string, raceId: string) {
+  return requestFriendRace(accessToken, { action: 'leave', raceId });
+}
+
 export async function acceptFriendRoute(accessToken: string, raceId: string) {
   const result = await requestFriendRace(accessToken, { action: 'accept_route', raceId });
   if (typeof result.status !== 'string') {

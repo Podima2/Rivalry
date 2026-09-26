@@ -130,7 +130,7 @@ export default {
       return jsonResponse({ raceId, distanceKm: race.distance_km, status: 'route_review' });
     }
 
-    if (body.action === 'status' || body.action === 'accept_route' || body.action === 'start_ready') {
+    if (body.action === 'status' || body.action === 'accept_route' || body.action === 'start_ready' || body.action === 'leave') {
       if (typeof body.raceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.raceId)) {
         return jsonResponse({ error: 'invalid_race_id' }, 400);
       }
@@ -149,6 +149,18 @@ export default {
           if (error.message.includes('route_missing')) return jsonResponse({ error: 'route_missing' }, 409);
           if (error.message.includes('route_distance_mismatch')) return jsonResponse({ error: 'route_distance_mismatch' }, 409);
           return jsonResponse({ error: 'route_accept_failed' }, 500);
+        }
+        return jsonResponse({ raceId: race.id, status: nextStatus });
+      }
+
+      if (body.action === 'leave') {
+        const { data: nextStatus, error } = await client.rpc('cancel_friend_race', {
+          p_race_id: race.id,
+          p_profile_id: profile.id,
+        });
+        if (error) {
+          if (error.message.includes('not_a_participant')) return jsonResponse({ error: 'not_a_race_participant' }, 403);
+          return jsonResponse({ error: 'leave_failed' }, 500);
         }
         return jsonResponse({ raceId: race.id, status: nextStatus });
       }

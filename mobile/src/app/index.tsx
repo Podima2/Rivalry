@@ -5,7 +5,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  Share,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,11 +16,10 @@ import { useLoginWithEmail, usePrivy } from '@privy-io/expo';
 import { useLocalSearchParams } from 'expo-router';
 import { getRunnerHandle, saveRunnerHandle } from '@/lib/runnerProfile';
 import { getRemoteRunnerHandle, isProfileServiceConfigured, ProfileServiceError, reserveRemoteRunnerHandle } from '@/lib/profileService';
-import { createFriendInvite, getActiveFriendRace, getFriendRaceStatus, joinFriendInvite, setFriendStartReady, type FriendRaceStatus } from '@/lib/raceService';
-import RoutePicker from '@/components/RoutePicker';
-import RaceLive from '@/components/RaceLive';
+import { createFriendInvite, getActiveFriendRace, joinFriendInvite } from '@/lib/raceService';
+import { getActiveStrangerRace, joinStrangerQueue } from '@/lib/strangerRaceService';
+import RaceFlow from '@/components/RaceFlow';
 import WorldVerificationTest from '@/components/WorldVerificationTest';
-import { getActiveStrangerRace, getStrangerRaceStatus, joinStrangerQueue, leaveStrangerRace, setStrangerStartReady, type StrangerRaceStatus } from '@/lib/strangerRaceService';
 
 const colors = {
   paper: '#F4F0E8',
@@ -31,6 +29,15 @@ const colors = {
   vermilion: '#E24B35',
   line: '#C9C0B3',
   white: '#FFFEFC',
+};
+
+type Distance = 1 | 3 | 5 | 10;
+type CurrentRace = {
+  mode: 'friends' | 'strangers';
+  raceId: string;
+  inviteCode: string | null;
+  celebrate: boolean;
+  notice?: string;
 };
 
 export default function HomeScreen() {
@@ -48,26 +55,15 @@ export default function HomeScreen() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [raceMode, setRaceMode] = useState<'friends' | 'strangers'>('friends');
-  const [raceDistance, setRaceDistance] = useState<1 | 3 | 5 | 10>(5);
+  const [raceDistance, setRaceDistance] = useState<Distance>(5);
   const [setupNotice, setSetupNotice] = useState('');
-  const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [inviteDraft, setInviteDraft] = useState('');
   const [raceActionBusy, setRaceActionBusy] = useState(false);
-  const [activeRaceId, setActiveRaceId] = useState<string | null>(null);
-  const [activeRaceStatus, setActiveRaceStatus] = useState<FriendRaceStatus | null>(null);
-  const [strangerRaceId, setStrangerRaceId] = useState<string | null>(null);
-  const [strangerRaceStatus, setStrangerRaceStatus] = useState<StrangerRaceStatus | null>(null);
-  const [strangerRestoreComplete, setStrangerRestoreComplete] = useState(false);
-  const [openRaceMode, setOpenRaceMode] = useState<'friends' | 'strangers'>('friends');
-  const [verifyingMatchedRace, setVerifyingMatchedRace] = useState(false);
-  const [raceClockMs, setRaceClockMs] = useState(0);
-  const [showRoutePicker, setShowRoutePicker] = useState(false);
-  const [showLiveRace, setShowLiveRace] = useState(false);
-  const friendLiveAutoOpened = useRef(false);
-  const strangerLiveAutoOpened = useRef(false);
+  // The one race this phone is taking part in. While set, the race screen owns the UI.
+  const [currentRace, setCurrentRace] = useState<CurrentRace | null>(null);
+  const [raceRestoredFor, setRaceRestoredFor] = useState<string | null>(null);
   const raceChosenOnThisLaunch = useRef(false);
-  const modeChosenOnThisLaunch = useRef(false);
-  const [showWorldVerificationTest, setShowWorldVerificationTest] = useState(false);
+  const [showSelfiePreview, setShowSelfiePreview] = useState(false);
   const privyUserId = user?.id;
   const awaitingCode = state.status === 'awaiting-code-input' || state.status === 'submitting-code';
   const busy = state.status === 'sending-code' || state.status === 'submitting-code';
@@ -82,17 +78,13 @@ export default function HomeScreen() {
 
   useEffect(() => {
     raceChosenOnThisLaunch.current = false;
-    modeChosenOnThisLaunch.current = false;
   }, [privyUserId]);
 
   useEffect(() => {
     if (typeof invite !== 'string' || !/^\d{4}$/.test(invite)) return;
     const timer = setTimeout(() => {
-      modeChosenOnThisLaunch.current = true;
       setRaceMode('friends');
       setInviteDraft(invite);
-      setShowRoutePicker(false);
-      setShowLiveRace(false);
       setSetupNotice('Friend invite link opened. Sign in if needed, then tap Join with code.');
     }, 0);
     return () => clearTimeout(timer);
@@ -134,57 +126,7 @@ export default function HomeScreen() {
     return () => { cancelled = true; };
   }, [getAccessToken, privyUserId]);
 
-  useEffect(() => {
-    if (!privyUserId || !isProfileServiceConfigured()) return;
-    let active = true;
-    const restoreRace = async () => {
-      try {
-        const accessToken = await getAccessToken();
-        if (!accessToken) return;
-        const race = await getActiveFriendRace(accessToken);
-        if (!active || !race || raceChosenOnThisLaunch.current) return;
-        if (!modeChosenOnThisLaunch.current) setRaceMode('friends');
-        setActiveRaceId(race.raceId);
-      } catch {
-        // Keep the home screen usable if race restoration is briefly unavailable.
-      }
-    };
-    void restoreRace();
-    return () => { active = false; };
-  }, [getAccessToken, privyUserId]);
-
-  useEffect(() => {
-    if (!activeRaceId || showRoutePicker) return;
-    let active = true;
-    const refresh = async () => {
-      try {
-        const accessToken = await getAccessToken();
-        if (!accessToken) return;
-        const status = await getFriendRaceStatus(accessToken, activeRaceId);
-        if (!active) return;
-        if (status.status === 'cancelled') {
-          setActiveRaceId(null);
-          setActiveRaceStatus(null);
-          setInviteCode(null);
-          setSetupNotice('That friend race was cancelled. Create or join a new invite to race again.');
-          return;
-        }
-        setActiveRaceStatus(status);
-        // Both runners land in the results lobby, including after a restart.
-        if ((status.status === 'active' || status.status === 'completed') && !friendLiveAutoOpened.current && strangerRestoreComplete && !strangerRaceId && raceMode === 'friends') {
-          friendLiveAutoOpened.current = true;
-          setOpenRaceMode('friends');
-          setShowLiveRace(true);
-        }
-      } catch {
-        // Keep the invite available while the race service is briefly offline.
-      }
-    };
-    void refresh();
-    const timer = setInterval(() => void refresh(), 4000);
-    return () => { active = false; clearInterval(timer); };
-  }, [activeRaceId, getAccessToken, raceMode, showRoutePicker, strangerRaceId, strangerRestoreComplete]);
-
+  // Reopen a race in progress (or its results) after a restart.
   useEffect(() => {
     if (!privyUserId || !isProfileServiceConfigured()) return;
     let active = true;
@@ -192,54 +134,19 @@ export default function HomeScreen() {
       try {
         const token = await getAccessToken();
         if (!token) return;
-        const raceId = await getActiveStrangerRace(token);
-        if (active && raceId) {
-          setStrangerRaceId(raceId);
-          if (!modeChosenOnThisLaunch.current) setRaceMode('strangers');
-        }
-      } catch { /* Keep the home screen usable while matching is unavailable. */ }
-      finally { if (active) setStrangerRestoreComplete(true); }
+        const [friendRace, strangerRaceId] = await Promise.all([
+          getActiveFriendRace(token).catch(() => null),
+          getActiveStrangerRace(token).catch(() => null),
+        ]);
+        if (!active || raceChosenOnThisLaunch.current) return;
+        if (friendRace) setCurrentRace({ mode: 'friends', raceId: friendRace.raceId, inviteCode: null, celebrate: false });
+        else if (strangerRaceId) setCurrentRace({ mode: 'strangers', raceId: strangerRaceId, inviteCode: null, celebrate: false });
+      } finally {
+        if (active) setRaceRestoredFor(privyUserId);
+      }
     })();
     return () => { active = false; };
   }, [getAccessToken, privyUserId]);
-
-  useEffect(() => {
-    if (!strangerRaceId || (showRoutePicker && openRaceMode === 'strangers')) return;
-    let active = true;
-    const refresh = async () => {
-      try {
-        const token = await getAccessToken();
-        if (!token || !active) return;
-        const status = await getStrangerRaceStatus(token, strangerRaceId);
-        if (!active) return;
-        if (status.status === 'cancelled') {
-          const nextRaceId = await getActiveStrangerRace(token);
-          if (!active) return;
-          setStrangerRaceId(nextRaceId);
-          setStrangerRaceStatus(null);
-          if (nextRaceId) setSetupNotice('Your previous match ended. You are back in the stranger queue.');
-          return;
-        }
-        setStrangerRaceStatus(status);
-        if (status.status !== 'completed') setRaceDistance(status.distanceKm);
-        if ((status.status === 'active' || status.status === 'completed') && !strangerLiveAutoOpened.current) {
-          strangerLiveAutoOpened.current = true;
-          setOpenRaceMode('strangers');
-          setShowLiveRace(true);
-        }
-      } catch { /* Preserve the last confirmed status during a network interruption. */ }
-    };
-    void refresh();
-    const timer = setInterval(() => void refresh(), 4000);
-    return () => { active = false; clearInterval(timer); };
-  }, [getAccessToken, openRaceMode, showRoutePicker, strangerRaceId]);
-
-  useEffect(() => {
-    if (activeRaceStatus?.status !== 'countdown' && activeRaceStatus?.status !== 'active' &&
-        strangerRaceStatus?.status !== 'countdown' && strangerRaceStatus?.status !== 'active') return;
-    const timer = setInterval(() => setRaceClockMs(Date.now()), 250);
-    return () => clearInterval(timer);
-  }, [activeRaceStatus?.status, strangerRaceStatus?.status]);
 
   async function requestCode() {
     setErrorMessage('');
@@ -369,10 +276,10 @@ export default function HomeScreen() {
               </View>
 
               <View style={styles.demoNotice}>
-                <Text style={styles.demoNoticeTitle}>{isProfileServiceConfigured() ? 'PROFILE SERVICE' : 'LOCAL DEMO PROFILE'}</Text>
+                <Text style={styles.demoNoticeTitle}>{isProfileServiceConfigured() ? 'UNIQUE RUNNER NAME' : 'LOCAL DEMO PROFILE'}</Text>
                 <Text style={styles.demoNoticeText}>{isProfileServiceConfigured()
-                  ? 'Your runner name is reserved in Rivalry’s profile service. Its planned testnet ENS name will be added when the parent domain and registrar are configured.'
-                  : 'This name is saved on this phone for now. Global availability and the planned ENS name will be connected when Rivalry’s profile service and testnet domain are configured.'}</Text>
+                  ? 'Your runner name is reserved for you across Rivalry. Opponents see it on the start line and in results.'
+                  : 'This name is saved on this phone for now. Global availability will be checked once Rivalry’s profile service is configured.'}</Text>
               </View>
               <Pressable accessibilityRole="button" onPress={() => void logout()} style={styles.textButton}>
                 <Text style={styles.textButtonLabel}>Sign out</Text>
@@ -383,51 +290,65 @@ export default function HomeScreen() {
       );
     }
 
+    if (currentRace) {
+      return (
+        <RaceFlow
+          key={currentRace.raceId}
+          mode={currentRace.mode}
+          raceId={currentRace.raceId}
+          inviteCode={currentRace.inviteCode}
+          selfHandle={runnerHandle}
+          celebrateIfMatched={currentRace.celebrate}
+          initialNotice={currentRace.notice}
+          getAccessToken={getAccessToken}
+          onExit={(notice) => { setCurrentRace(null); setSetupNotice(notice ?? ''); }}
+          onRaceChanged={(raceId, notice) => setCurrentRace({ mode: 'strangers', raceId, inviteCode: null, celebrate: false, notice })}
+        />
+      );
+    }
+
+    if (showSelfiePreview) {
+      return <WorldVerificationTest getAccessToken={getAccessToken} onBack={() => setShowSelfiePreview(false)} />;
+    }
+
+    if (isProfileServiceConfigured() && raceRestoredFor !== profileUserId) {
+      return (
+        <SafeAreaView style={styles.safeArea}>
+          <View style={styles.loading}>
+            <ActivityIndicator color={colors.vermilion} />
+            <Text style={styles.loadingText}>Checking for a race in progress…</Text>
+          </View>
+        </SafeAreaView>
+      );
+    }
+
     async function startRaceSetup() {
       setSetupNotice('');
-      setInviteCode(null);
-      if (raceMode === 'strangers') {
-        if (raceDistance === 10) {
-          setSetupNotice('10 km stranger matching is paused because this Sandbox setup cannot issue the required Official ID credential. Choose 1, 3, or 5 km.');
-          return;
-        }
-        setRaceActionBusy(true);
-        try {
-          const token = await getAccessToken();
-          if (!token) throw new ProfileServiceError('No active Privy token.', 'unauthorized', 401);
-          const raceId = await joinStrangerQueue(token, raceDistance);
-          setStrangerRaceId(raceId);
-          setStrangerRaceStatus(await getStrangerRaceStatus(token, raceId));
-          strangerLiveAutoOpened.current = false;
-          setSetupNotice('You are in the stranger queue. Rivalry will match another runner at the same distance.');
-        } catch {
-          setSetupNotice('Couldn’t join stranger matching. Check the connection and try again.');
-        } finally { setRaceActionBusy(false); }
-        return;
-      }
       if (!isProfileServiceConfigured()) {
-        setSetupNotice('Friend invites need the Supabase profile and race services. Your local demo profile is ready; the invite service is not configured yet.');
+        setSetupNotice('Races need the Supabase profile and race services, which aren’t configured on this build.');
         return;
       }
-
       setRaceActionBusy(true);
       try {
-        const accessToken = await getAccessToken();
-        if (!accessToken) throw new ProfileServiceError('No active Privy token.', 'unauthorized', 401);
-        const invite = await createFriendInvite(accessToken, raceDistance);
+        const token = await getAccessToken();
+        if (!token) throw new ProfileServiceError('No active Privy token.', 'unauthorized', 401);
         raceChosenOnThisLaunch.current = true;
-        setInviteCode(invite.inviteCode);
-        setActiveRaceId(invite.raceId);
-        setActiveRaceStatus(null);
-        friendLiveAutoOpened.current = false;
-        setSetupNotice(`${invite.distanceKm} km invite created. Share this four-digit code with one friend; it expires in 10 minutes.`);
+        if (raceMode === 'strangers') {
+          const raceId = await joinStrangerQueue(token, raceDistance);
+          setCurrentRace({ mode: 'strangers', raceId, inviteCode: null, celebrate: true });
+        } else {
+          const created = await createFriendInvite(token, raceDistance);
+          setCurrentRace({ mode: 'friends', raceId: created.raceId, inviteCode: created.inviteCode, celebrate: false });
+        }
       } catch (error) {
         const code = error instanceof ProfileServiceError ? error.code : '';
         setSetupNotice(code === 'profile_required'
-          ? 'Save a runner name to the profile service before creating an invite.'
+          ? 'Save a runner name before starting a race.'
           : code === 'unauthorized'
             ? 'Your sign-in session needs refreshing. Sign out and back in, then try again.'
-            : 'Couldn’t create the invite. Check the connection and confirm the race service is deployed.');
+            : raceMode === 'strangers'
+              ? 'Couldn’t join stranger matching. Check the connection and try again.'
+              : 'Couldn’t create the invite. Check the connection and try again.');
       } finally {
         setRaceActionBusy(false);
       }
@@ -436,144 +357,32 @@ export default function HomeScreen() {
     async function joinInvite() {
       setSetupNotice('');
       if (!isProfileServiceConfigured()) {
-        setSetupNotice('Joining an invite needs the Supabase profile and race services. The code can be entered once they’re configured.');
+        setSetupNotice('Joining an invite needs the Supabase profile and race services.');
         return;
       }
-
       setRaceActionBusy(true);
       try {
         const accessToken = await getAccessToken();
         if (!accessToken) throw new ProfileServiceError('No active Privy token.', 'unauthorized', 401);
         const joined = await joinFriendInvite(accessToken, inviteDraft);
         raceChosenOnThisLaunch.current = true;
-        setRaceDistance(joined.distanceKm);
-        setActiveRaceId(joined.raceId);
-        setActiveRaceStatus(null);
-        friendLiveAutoOpened.current = false;
-        setSetupNotice('You joined the friend race. Next, both runners choose safe starts and review their routes.');
         setInviteDraft('');
+        setCurrentRace({ mode: 'friends', raceId: joined.raceId, inviteCode: null, celebrate: true });
       } catch (error) {
         const code = error instanceof ProfileServiceError ? error.code : '';
         setSetupNotice(code === 'invite_unavailable'
           ? 'That invite code is invalid, expired, or already joined.'
           : code === 'invite_rate_limited'
             ? 'Too many code attempts. Try again in 15 minutes.'
-          : code === 'profile_required'
-            ? 'Save a runner name to the profile service before joining.'
-            : 'Couldn’t join the race. Check the connection and try again.');
+            : code === 'profile_required'
+              ? 'Save a runner name before joining.'
+              : 'Couldn’t join the race. Check the connection and try again.');
       } finally {
         setRaceActionBusy(false);
       }
     }
 
-    async function updateStartReadiness(ready: boolean) {
-      if (!activeRaceId) return;
-      setRaceActionBusy(true);
-      setSetupNotice('');
-      try {
-        const accessToken = await getAccessToken();
-        if (!accessToken) throw new ProfileServiceError('No active Privy token.', 'unauthorized', 401);
-        await setFriendStartReady(accessToken, activeRaceId, ready);
-        setActiveRaceStatus(await getFriendRaceStatus(accessToken, activeRaceId));
-      } catch (error) {
-        const code = error instanceof ProfileServiceError ? error.code : '';
-        setSetupNotice(code === 'race_not_ready_for_start'
-          ? 'This race has already moved past start confirmation. Check its current status.'
-          : 'Couldn’t update your start confirmation. Check the connection and try again.');
-      } finally {
-        setRaceActionBusy(false);
-      }
-    }
-
-    async function updateStrangerReadiness(ready: boolean) {
-      if (!strangerRaceId) return;
-      setRaceActionBusy(true);
-      setSetupNotice('');
-      try {
-        const token = await getAccessToken();
-        if (!token) throw new Error('No active session');
-        await setStrangerStartReady(token, strangerRaceId, ready);
-        setStrangerRaceStatus(await getStrangerRaceStatus(token, strangerRaceId));
-      } catch { setSetupNotice('Couldn’t update start confirmation. Check the connection and retry.'); }
-      finally { setRaceActionBusy(false); }
-    }
-
-    async function leaveStranger() {
-      if (!strangerRaceId) return;
-      setRaceActionBusy(true);
-      try {
-        const token = await getAccessToken();
-        if (!token) throw new Error('No active session');
-        await leaveStrangerRace(token, strangerRaceId);
-        setStrangerRaceId(null);
-        setStrangerRaceStatus(null);
-        setSetupNotice('You left stranger matching.');
-      } catch { setSetupNotice('Couldn’t leave this match. Check the connection and retry.'); }
-      finally { setRaceActionBusy(false); }
-    }
-
-    const selfStartReady = activeRaceStatus?.participants.find((participant) => participant.isSelf)?.startReady ?? false;
-    const friendStartReady = activeRaceStatus?.participants.find((participant) => !participant.isSelf)?.startReady ?? false;
-    const serverClockOffset = activeRaceStatus?.serverTime
-      ? Date.parse(activeRaceStatus.serverTime) - activeRaceStatus.receivedAt : 0;
-    const serverNow = raceClockMs + serverClockOffset;
-    const countdownSeconds = activeRaceStatus?.scheduledStartAt
-      ? Math.max(0, Math.ceil((Date.parse(activeRaceStatus.scheduledStartAt) - serverNow) / 1000)) : 0;
-    const elapsedSeconds = activeRaceStatus?.startedAt
-      ? Math.max(0, Math.floor((serverNow - Date.parse(activeRaceStatus.startedAt)) / 1000)) : 0;
-
-    const strangerSelf = strangerRaceStatus?.participants.find((participant) => participant.isSelf);
-    const strangerOther = strangerRaceStatus?.participants.find((participant) => !participant.isSelf);
-    const strangerClockOffset = strangerRaceStatus?.serverTime
-      ? Date.parse(strangerRaceStatus.serverTime) - strangerRaceStatus.receivedAt : 0;
-    const strangerNow = raceClockMs + strangerClockOffset;
-    const strangerCountdownSeconds = strangerRaceStatus?.scheduledStartAt
-      ? Math.max(0, Math.ceil((Date.parse(strangerRaceStatus.scheduledStartAt) - strangerNow) / 1000)) : 0;
-
-    const openedRaceId = openRaceMode === 'strangers' ? strangerRaceId : activeRaceId;
-    if (showRoutePicker && openedRaceId) {
-      return (
-        <RoutePicker
-          raceId={openedRaceId}
-          mode={openRaceMode}
-          getAccessToken={getAccessToken}
-          onBack={() => setShowRoutePicker(false)}
-        />
-      );
-    }
-
-    if (showLiveRace && openedRaceId) {
-      return <RaceLive raceId={openedRaceId} getAccessToken={getAccessToken} onBack={() => setShowLiveRace(false)}
-        onDone={() => {
-          // Leaving the results lobby ends this pairing on this phone.
-          setShowLiveRace(false);
-          if (openRaceMode === 'strangers') {
-            setStrangerRaceId(null);
-            setStrangerRaceStatus(null);
-          } else {
-            setActiveRaceId(null);
-            setActiveRaceStatus(null);
-            setInviteCode(null);
-          }
-          setSetupNotice('');
-        }} />;
-    }
-
-    if (showWorldVerificationTest) {
-      return <WorldVerificationTest getAccessToken={getAccessToken}
-        raceId={verifyingMatchedRace ? strangerRaceId ?? undefined : undefined}
-        distanceKm={verifyingMatchedRace ? strangerRaceStatus?.distanceKm : undefined}
-        onVerified={() => {
-          if (verifyingMatchedRace && strangerRaceId) {
-            void (async () => {
-              const token = await getAccessToken();
-              if (token) setStrangerRaceStatus(await getStrangerRaceStatus(token, strangerRaceId));
-            })().catch(() => undefined);
-          }
-        }}
-        onBack={() => { setShowWorldVerificationTest(false); setVerifyingMatchedRace(false); }} />;
-    }
-
+    const strangers = raceMode === 'strangers';
     return (
       <SafeAreaView style={styles.safeArea}>
         <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
@@ -584,23 +393,23 @@ export default function HomeScreen() {
           </View>
           <Text style={styles.eyebrow}>WELCOME, @{runnerHandle}</Text>
           <Text accessibilityRole="header" style={styles.profileHeadline}>Who are you racing?</Text>
-          <Text style={styles.description}>Pick a race type and distance. You’ll both review your routes before the start.</Text>
+          <Text style={styles.description}>Pick a race type and distance. Everything from matching to the finish happens on one race screen.</Text>
 
           <View style={styles.modeChoices}>
-            <Pressable accessibilityRole="button" accessibilityState={{ selected: raceMode === 'friends' }} onPress={() => { modeChosenOnThisLaunch.current = true; setRaceMode('friends'); setSetupNotice(''); }} style={[styles.modeCard, raceMode === 'friends' && styles.modeCardSelected]}>
+            <Pressable accessibilityRole="button" accessibilityState={{ selected: !strangers }} onPress={() => { setRaceMode('friends'); setSetupNotice(''); }} style={[styles.modeCard, !strangers && styles.modeCardSelected]}>
               <Text style={styles.modeNumber}>01 / WITH A FRIEND</Text>
               <Text style={styles.modeTitle}>Bring your own rival</Text>
-              <Text style={styles.modeDescription}>Share an invite link. No World ID check is needed.</Text>
+              <Text style={styles.modeDescription}>Share a four-digit code. No verification needed.</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityState={{ selected: raceMode === 'strangers' }} onPress={() => { modeChosenOnThisLaunch.current = true; setRaceMode('strangers'); setSetupNotice(''); }} style={[styles.modeCard, raceMode === 'strangers' && styles.modeCardSelected]}>
+            <Pressable accessibilityRole="button" accessibilityState={{ selected: strangers }} onPress={() => { setRaceMode('strangers'); setSetupNotice(''); }} style={[styles.modeCard, strangers && styles.modeCardSelected]}>
               <Text style={styles.modeNumber}>02 / OPEN MATCH</Text>
               <Text style={styles.modeTitle}>Meet at the start line</Text>
-              <Text style={styles.modeDescription}>Match with a runner worldwide. Your location stays private.</Text>
+              <Text style={styles.modeDescription}>Match with a runner worldwide. Both of you pass a World ID Selfie Check; your location stays private.</Text>
             </Pressable>
           </View>
 
-          {(raceMode === 'friends' || !strangerRaceId || strangerRaceStatus?.status === 'completed') ? <View style={styles.distancePanel}>
-            <Text style={styles.panelEyebrow}>CHOOSE DISTANCE FOR A NEW RACE</Text>
+          <View style={styles.distancePanel}>
+            <Text style={styles.panelEyebrow}>CHOOSE DISTANCE</Text>
             <View style={styles.distanceChoices}>
               {([1, 3, 5, 10] as const).map((distance) => (
                 <Pressable key={distance} accessibilityRole="button" accessibilityState={{ selected: raceDistance === distance }} onPress={() => setRaceDistance(distance)} style={[styles.distanceOption, raceDistance === distance && styles.distanceOptionSelected]}>
@@ -609,128 +418,21 @@ export default function HomeScreen() {
                 </Pressable>
               ))}
             </View>
-          </View> : null}
-          <View style={styles.raceNote}>
-            <Text style={styles.raceNoteTitle}>{raceMode === 'strangers' && raceDistance > 6 ? '10 KM · DEMO ONLY' : raceMode === 'strangers' ? 'VERIFIED STRANGER RACE' : 'A FAIR RACE, WHEREVER YOU ARE'}</Text>
-            <Text style={styles.raceNoteText}>
-              {raceMode === 'strangers'
-                ? raceDistance > 6
-                  ? '10 km stranger races require a fresh Selfie Check and an Official ID credential. World ID Sandbox cannot issue the ID credential here yet, so this tier is a demo only and cannot start a verified race.'
-                  : 'Before the countdown, both runners complete a fresh Selfie Check. Opponents see race progress, never your live location.'
-                : 'Share a private invite link. Both runners review their routes and confirm the start; no World ID verification is required.'}
-            </Text>
           </View>
-          {raceMode === 'strangers' ? (
-            <Pressable accessibilityRole="button" onPress={() => setShowWorldVerificationTest(true)} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonLabel}>Selfie Check for stranger races · Sandbox</Text>
+
+          <Pressable accessibilityRole="button" disabled={raceActionBusy} onPress={() => void startRaceSetup()} style={({ pressed }) => [styles.primaryButton, styles.startButton, pressed && styles.pressed, raceActionBusy && styles.disabled]}>
+            {raceActionBusy ? <ActivityIndicator color={colors.white} /> : (
+              <Text style={styles.primaryButtonLabel}>{strangers ? `Find a ${raceDistance} km runner` : `Create a ${raceDistance} km invite`}</Text>
+            )}
+          </Pressable>
+
+          {strangers ? (
+            <Pressable accessibilityRole="button" onPress={() => setShowSelfiePreview(true)} style={styles.textButtonCentered}>
+              <Text style={styles.textButtonLabel}>Try the Selfie Check first · Sandbox preview</Text>
             </Pressable>
-          ) : null}
-          {(raceMode === 'friends' || !strangerRaceId || strangerRaceStatus?.status === 'completed') ? <Pressable accessibilityRole="button" disabled={raceActionBusy} onPress={() => void startRaceSetup()} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, raceActionBusy && styles.disabled]}>
-            {raceActionBusy ? <ActivityIndicator color={colors.white} /> : null}
-            {!raceActionBusy ? <Text style={styles.primaryButtonLabel}>{raceMode === 'friends' ? `Create a ${raceDistance} km friend invite` : raceDistance > 6 ? '10 km stranger race · unavailable in Sandbox' : `Find a ${raceDistance} km stranger race`}</Text> : null}
-          </Pressable> : null}
-          {raceMode === 'friends' && inviteCode && activeRaceStatus?.status === 'waiting_for_opponent' ? (
-            <View style={styles.inviteCard}>
-              <Text style={styles.raceNoteTitle}>YOUR FRIEND INVITE CODE</Text>
-              <Text accessibilityLabel={`Invite code ${inviteCode}`} selectable style={styles.inviteCode}>{inviteCode}</Text>
-              <Pressable accessibilityRole="button" onPress={() => void Share.share({ message: `Join my ${activeRaceStatus.distanceKm} km Rivalry race: rivalry:///?invite=${inviteCode}` })} style={styles.secondaryButton}>
-                <Text style={styles.secondaryButtonLabel}>Share invite link</Text>
-              </Pressable>
-            </View>
-          ) : null}
-          {raceMode === 'friends' && activeRaceId && activeRaceStatus ? (
-            <View style={styles.inviteCard}>
-              <Text style={styles.panelEyebrow}>CURRENT RACE · {activeRaceStatus.distanceKm} KM</Text>
-              <Text style={styles.raceNoteTitle}>{activeRaceStatus.status === 'waiting_for_opponent'
-                ? 'WAITING FOR YOUR FRIEND'
-                : activeRaceStatus.status === 'countdown' ? 'SHARED COUNTDOWN'
-                : activeRaceStatus.status === 'active' ? 'RACE STARTED'
-                : activeRaceStatus.status === 'completed' ? 'RACE COMPLETE'
-                : `PAIRED WITH @${activeRaceStatus.participants.find((participant) => !participant.isSelf)?.handle ?? 'RUNNER'}`}</Text>
-              <Text style={styles.raceNoteText}>{activeRaceStatus.status === 'waiting_for_opponent'
-                ? 'Your friend can join with the invite code above. Both phones will show the pairing here.'
-                : activeRaceStatus.status === 'countdown'
-                  ? `Both runners confirmed. Starting together in ${countdownSeconds} seconds.`
-                : activeRaceStatus.status === 'active'
-                  ? `Started together · ${Math.floor(elapsedSeconds / 60).toString().padStart(2, '0')}:${(elapsedSeconds % 60).toString().padStart(2, '0')} elapsed. Open the live race to record GPS.`
-                : activeRaceStatus.status === 'completed'
-                  ? 'Both runners are done. Open the race to see the result.'
-                : activeRaceStatus.status === 'ready'
-                  ? `Both routes are accepted. ${selfStartReady ? friendStartReady ? 'Preparing the countdown.' : 'Waiting for your friend to confirm the start.' : friendStartReady ? 'Your friend is ready. Confirm when you are at your start.' : 'Both runners must confirm they are at their starts.'}`
-                  : `Both runners joined this ${activeRaceStatus.distanceKm} km race. Choose a nearby start and review your route.`}</Text>
-              {activeRaceStatus.status === 'ready' ? (
-                <Pressable accessibilityRole="button" disabled={raceActionBusy} onPress={() => void updateStartReadiness(!selfStartReady)} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, raceActionBusy && styles.disabled]}>
-                  {raceActionBusy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryButtonLabel}>{selfStartReady ? 'Cancel my start confirmation' : 'I’m at my start · ready'}</Text>}
-                </Pressable>
-              ) : null}
-              {activeRaceStatus.status === 'route_review' || activeRaceStatus.status === 'ready' ? (
-                <Pressable accessibilityRole="button" onPress={() => { setOpenRaceMode('friends'); setShowRoutePicker(true); }} style={styles.secondaryButton}>
-                  <Text style={styles.secondaryButtonLabel}>Review my route</Text>
-                </Pressable>
-              ) : null}
-              {activeRaceStatus.status === 'active' || activeRaceStatus.status === 'completed' ? (
-                <Pressable accessibilityRole="button" onPress={() => { setOpenRaceMode('friends'); setShowLiveRace(true); }} style={styles.secondaryButton}>
-                  <Text style={styles.secondaryButtonLabel}>{activeRaceStatus.status === 'completed' ? 'View result' : 'Open live race'}</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ) : null}
-          {raceMode === 'strangers' && strangerRaceId && strangerRaceStatus ? (
-            <View style={styles.inviteCard}>
-              <Text style={styles.panelEyebrow}>STRANGER RACE · {strangerRaceStatus.distanceKm} KM</Text>
-              <Text style={styles.raceNoteTitle}>{strangerRaceStatus.status === 'waiting_for_opponent'
-                ? 'FINDING AN OPPONENT'
-                : strangerRaceStatus.status === 'route_review' ? 'MATCHED · REVIEW ROUTES'
-                : strangerRaceStatus.status === 'ready' ? 'CONFIRM YOUR START'
-                : strangerRaceStatus.status === 'verification' ? 'SELFIE CHECK REQUIRED'
-                : strangerRaceStatus.status === 'countdown' ? 'SHARED COUNTDOWN'
-                : strangerRaceStatus.status === 'active' ? 'RACE STARTED' : 'RACE COMPLETE'}</Text>
-              <Text style={styles.raceNoteText}>{strangerRaceStatus.status === 'waiting_for_opponent'
-                ? 'Searching for another runner at this distance. You remain in the queue until matched or you leave.'
-                : strangerRaceStatus.status === 'route_review'
-                  ? `Matched with @${strangerOther?.handle ?? 'runner'}. Both of you choose a route near your own start.`
-                : strangerRaceStatus.status === 'ready'
-                  ? strangerSelf?.startReady ? 'Waiting for your opponent to confirm their start.' : 'Both routes are accepted. Confirm when you are at your start.'
-                : strangerRaceStatus.status === 'verification'
-                  ? strangerRaceStatus.distanceKm === 10
-                    ? 'Both runners need a fresh Selfie Check and an Official ID credential. The ID credential is unavailable in this Sandbox setup.'
-                    : strangerSelf?.selfieVerified ? 'Your Selfie Check passed. Waiting for your opponent; if they don’t verify within 6 minutes, you return to the queue.' : 'Complete a fresh Selfie Check within 6 minutes, or this match is cancelled.'
-                  : strangerRaceStatus.status === 'countdown'
-                    ? `Verified Sandbox race starts in ${strangerCountdownSeconds} seconds.`
-                    : strangerRaceStatus.status === 'active'
-                      ? 'Race in progress. Your opponent sees your progress, never your GPS location.'
-                      : 'Open the result to see the outcome.'}</Text>
-              {strangerRaceStatus.status === 'route_review' || strangerRaceStatus.status === 'ready' ? (
-                <Pressable accessibilityRole="button" onPress={() => { setOpenRaceMode('strangers'); setShowRoutePicker(true); }} style={styles.secondaryButton}>
-                  <Text style={styles.secondaryButtonLabel}>Review my route</Text>
-                </Pressable>
-              ) : null}
-              {strangerRaceStatus.status === 'ready' ? (
-                <Pressable accessibilityRole="button" disabled={raceActionBusy} onPress={() => void updateStrangerReadiness(!strangerSelf?.startReady)} style={[styles.primaryButton, raceActionBusy && styles.disabled]}>
-                  <Text style={styles.primaryButtonLabel}>{strangerSelf?.startReady ? 'Cancel my start confirmation' : 'I’m at my start · ready'}</Text>
-                </Pressable>
-              ) : null}
-              {strangerRaceStatus.status === 'verification' && !strangerSelf?.selfieVerified ? (
-                <Pressable accessibilityRole="button" onPress={() => { setVerifyingMatchedRace(true); setShowWorldVerificationTest(true); }} style={styles.primaryButton}>
-                  <Text style={styles.primaryButtonLabel}>Complete Selfie Check</Text>
-                </Pressable>
-              ) : null}
-              {strangerRaceStatus.status === 'active' || strangerRaceStatus.status === 'completed' ? (
-                <Pressable accessibilityRole="button" onPress={() => { setOpenRaceMode('strangers'); setShowLiveRace(true); }} style={styles.secondaryButton}>
-                  <Text style={styles.secondaryButtonLabel}>{strangerRaceStatus.status === 'completed' ? 'View result' : 'Open live race'}</Text>
-                </Pressable>
-              ) : null}
-              {['waiting_for_opponent', 'route_review', 'ready', 'verification', 'countdown'].includes(strangerRaceStatus.status) ? (
-                <Pressable accessibilityRole="button" disabled={raceActionBusy} onPress={() => void leaveStranger()} style={styles.textButton}>
-                  <Text style={styles.textButtonLabel}>{strangerRaceStatus.status === 'waiting_for_opponent' ? 'Leave queue' : 'Decline this match'}</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          ) : null}
-          {raceMode === 'friends' ? (
+          ) : (
             <View style={styles.joinPanel}>
-              <Text style={styles.panelEyebrow}>JOIN A FRIEND’S RACE</Text>
-              <Text style={styles.raceNoteText}>On the second phone, sign in with a different email and runner name, then enter the four-digit code.</Text>
+              <Text style={styles.panelEyebrow}>GOT A CODE FROM A FRIEND?</Text>
               <TextInput
                 accessibilityLabel="Friend race invite code"
                 autoCorrect={false}
@@ -748,9 +450,8 @@ export default function HomeScreen() {
                 <Text style={styles.secondaryButtonLabel}>Join with code</Text>
               </Pressable>
             </View>
-          ) : null}
+          )}
           {setupNotice ? <Text accessibilityRole="alert" style={styles.setupNotice}>{setupNotice}</Text> : null}
-          <Text style={styles.setupStatus}>{raceMode === 'strangers' ? 'STRANGER RACES · WORLD ID BEFORE START' : 'FRIEND RACES · SHARED START'}</Text>
           <View style={styles.accountActions}>
             <Pressable accessibilityRole="button" onPress={() => { setHandleDraft(runnerHandle); setRunnerHandle(null); }} style={styles.textButton}>
               <Text style={styles.textButtonLabel}>Edit runner name</Text>
@@ -901,20 +602,19 @@ const styles = StyleSheet.create({
   input: { height: 52, borderWidth: 1, borderColor: colors.line, color: colors.ink, fontSize: 16, paddingHorizontal: 14, backgroundColor: colors.paper, marginBottom: 11 },
   primaryButton: { minHeight: 52, backgroundColor: colors.vermilion, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
   primaryButtonLabel: { color: colors.white, fontSize: 14, fontWeight: '800', letterSpacing: 0.3 },
+  startButton: { marginTop: 17 },
   pressed: { opacity: 0.8 },
   disabled: { opacity: 0.45 },
   error: { color: '#A42F20', fontSize: 12, lineHeight: 17, marginBottom: 10 },
   codeActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 15 },
   textButton: { marginTop: 26 },
+  textButtonCentered: { alignItems: 'center', marginTop: 18 },
   textButtonLabel: { color: colors.vermilion, fontSize: 13, fontWeight: '800' },
   bottomCopy: { marginTop: 'auto', paddingTop: 26 },
   bottomEyebrow: { color: colors.vermilion, fontSize: 10, fontWeight: '800', letterSpacing: 1.3, marginBottom: 7 },
   bottomText: { color: colors.muted, fontSize: 11, lineHeight: 16, maxWidth: 280 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
   loadingText: { color: colors.muted, fontSize: 14 },
-  signedIn: { flex: 1, paddingHorizontal: 28, paddingTop: 22, justifyContent: 'center', alignItems: 'flex-start' },
-  signedInMark: { width: 52, height: 52, borderRadius: 26, backgroundColor: colors.vermilion, alignItems: 'center', justifyContent: 'center', marginTop: 70, marginBottom: 25 },
-  check: { color: colors.white, fontSize: 27, fontWeight: '700' },
   profileHeadline: { color: colors.ink, fontFamily: 'serif', fontSize: 38, lineHeight: 43, letterSpacing: -1.2 },
   profilePanel: { backgroundColor: colors.white, padding: 19, marginTop: 27, borderWidth: 1, borderColor: colors.line },
   handleInputRow: { height: 56, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper, marginTop: 10, paddingHorizontal: 14 },
@@ -938,14 +638,8 @@ const styles = StyleSheet.create({
   distanceNumberSelected: { color: colors.white },
   distanceLabel: { color: colors.muted, fontSize: 8, fontWeight: '800', letterSpacing: 1 },
   distanceLabelSelected: { color: colors.paperDeep },
-  raceNote: { padding: 16, borderLeftWidth: 3, borderLeftColor: colors.vermilion, backgroundColor: colors.white, marginTop: 17 },
-  raceNoteTitle: { color: colors.vermilion, fontSize: 9, fontWeight: '900', letterSpacing: 1.2 },
-  raceNoteText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 7 },
-  setupStatus: { color: colors.muted, textAlign: 'center', fontSize: 8, fontWeight: '800', letterSpacing: 0.9, marginTop: 12 },
-  setupNotice: { color: colors.muted, fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 10 },
+  setupNotice: { color: colors.muted, fontSize: 12, lineHeight: 18, textAlign: 'center', marginTop: 14 },
   accountActions: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 20 },
-  inviteCard: { backgroundColor: colors.white, padding: 16, marginTop: 13, borderWidth: 1, borderColor: colors.line, alignItems: 'center' },
-  inviteCode: { color: colors.ink, fontSize: 23, fontWeight: '900', letterSpacing: 2, marginVertical: 12 },
   joinPanel: { backgroundColor: colors.paperDeep, padding: 16, marginTop: 16 },
   raceCodeInput: { height: 50, borderWidth: 1, borderColor: colors.line, color: colors.ink, fontSize: 16, letterSpacing: 1.4, paddingHorizontal: 13, backgroundColor: colors.white, marginTop: 10, marginBottom: 9 },
   secondaryButton: { minHeight: 46, borderWidth: 1, borderColor: colors.ink, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },

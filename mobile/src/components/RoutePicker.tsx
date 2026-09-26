@@ -19,7 +19,10 @@ type Props = {
   raceId: string;
   mode?: 'friends' | 'strangers';
   getAccessToken: () => Promise<string | null>;
-  onBack: () => void;
+  onBack?: () => void;
+  /** Rendered as a step inside the race screen: no page chrome or back button. */
+  embedded?: boolean;
+  onAccepted?: () => void;
 };
 
 function errorCopy(error: unknown) {
@@ -30,12 +33,13 @@ function errorCopy(error: unknown) {
   if (code === 'route_distance_mismatch') return 'Both routes must be close to the agreed distance. Regenerate the route that is too long or short.';
   if (code === 'race_not_ready_for_routes') return 'Waiting for both runners to join before creating routes.';
   if (code === 'route_missing') return 'Generate your route before accepting it.';
+  if (code === 'verification_required') return 'Complete your Selfie Check before creating a route.';
   if (code === 'not_a_race_participant') return 'Your account is not part of this friend race.';
   if (code === 'not_configured') return 'The race service is not configured on this build.';
   return 'Couldn’t load the route. Check your connection and try again.';
 }
 
-export default function RoutePicker({ raceId, mode = 'friends', getAccessToken, onBack }: Props) {
+export default function RoutePicker({ raceId, mode = 'friends', getAccessToken, onBack, embedded = false, onAccepted }: Props) {
   const [start, setStart] = useState<StartPoint | null>(null);
   const [route, setRoute] = useState<RoutePreview | null>(null);
   const [raceStatus, setRaceStatus] = useState<FriendRaceStatus | StrangerRaceStatus | null>(null);
@@ -165,6 +169,7 @@ export default function RoutePicker({ raceId, mode = 'friends', getAccessToken, 
         ? 'Both routes are accepted. Your race is ready for its start setup.'
         : `Route accepted. Waiting for your ${mode === 'strangers' ? 'opponent' : 'friend'} to finish reviewing their route.`);
       await refreshStatus();
+      onAccepted?.();
     } catch (cause) {
       setError(errorCopy(cause));
     } finally {
@@ -197,15 +202,18 @@ export default function RoutePicker({ raceId, mode = 'friends', getAccessToken, 
   }) : [];
   const missingAndroidMapsKey = Platform.OS === 'android' && !process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
 
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.topbar}>
-          <Pressable accessibilityRole="button" onPress={onBack} style={styles.backButton}><Text style={styles.backLabel}>‹ RACES</Text></Pressable>
-          <Text style={styles.wordmark}>RIVALRY</Text>
-        </View>
-        <Text style={styles.eyebrow}>ROUTE REVIEW · {raceStatus?.distanceKm ?? '—'} KM</Text>
-        <Text accessibilityRole="header" style={styles.title}>{bothRoutesAccepted ? 'Routes accepted.' : 'Choose a safe start.'}</Text>
+  const body = (
+      <>
+        {!embedded ? (
+          <>
+            <View style={styles.topbar}>
+              <Pressable accessibilityRole="button" onPress={onBack} style={styles.backButton}><Text style={styles.backLabel}>‹ RACES</Text></Pressable>
+              <Text style={styles.wordmark}>RIVALRY</Text>
+            </View>
+            <Text style={styles.eyebrow}>ROUTE REVIEW · {raceStatus?.distanceKm ?? '—'} KM</Text>
+            <Text accessibilityRole="header" style={styles.title}>{bothRoutesAccepted ? 'Routes accepted.' : 'Choose a safe start.'}</Text>
+          </>
+        ) : null}
         <Text style={styles.copy}>{bothRoutesAccepted
           ? 'Both runners approved their routes. This race is ready for start coordination.'
           : 'We’ll build a route near you. Your start point goes to our route provider and stays private to this race.'}</Text>
@@ -307,14 +315,20 @@ export default function RoutePicker({ raceId, mode = 'friends', getAccessToken, 
             {busy === 'accept' ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryButtonLabel}>Accept this route</Text>}
           </Pressable>
         ) : null}
-        {bothRoutesAccepted ? (
+        {bothRoutesAccepted && onBack ? (
           <Pressable accessibilityRole="button" onPress={onBack} style={styles.primaryButton}>
             <Text style={styles.primaryButtonLabel}>Back to race</Text>
           </Pressable>
         ) : null}
         {start && !bothRoutesAccepted ? <Pressable accessibilityRole="button" onPress={() => { setStart(null); setRoute(null); setError(''); }} style={styles.textButton}><Text style={styles.textButtonLabel}>Choose another start</Text></Pressable> : null}
         <Text style={styles.privacyNote}>{mode === 'strangers' ? 'Your opponent sees route distance, elevation, and race progress. Your location stays private.' : 'Your friend sees your route profile and progress. Exact start coordinates stay private.'}</Text>
-      </ScrollView>
+      </>
+  );
+
+  if (embedded) return <View>{body}</View>;
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.content}>{body}</ScrollView>
     </SafeAreaView>
   );
 }

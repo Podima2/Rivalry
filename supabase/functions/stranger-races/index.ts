@@ -35,9 +35,6 @@ export default {
     if (body.action === 'queue') {
       const distanceKm = Number(body.distanceKm);
       if (![1, 3, 5, 10].includes(distanceKm)) return jsonResponse({ error: 'invalid_distance' }, 400);
-      if (distanceKm === 10 && (Deno.env.get('WORLD_ID_ENVIRONMENT') ?? 'sandbox') === 'sandbox') {
-        return jsonResponse({ error: 'official_id_unavailable_in_sandbox' }, 409);
-      }
       await client.rpc('dismiss_completed_races', { p_profile_id: profile.id });
       const { data: raceId, error } = await client.rpc('join_stranger_queue', {
         p_profile_id: profile.id, p_distance_km: distanceKm,
@@ -97,7 +94,8 @@ export default {
       const { data: status, error } = await client.rpc('set_friend_race_start_ready', {
         p_race_id: race.id, p_profile_id: profile.id, p_ready: body.ready,
       });
-      if (error) return jsonResponse({ error: 'start_ready_failed' }, 409);
+      if (error) return jsonResponse({ error: error.message.includes('verification_required')
+        ? 'verification_required' : 'start_ready_failed' }, 409);
       return jsonResponse({ status });
     }
 
@@ -107,7 +105,7 @@ export default {
       if (error) return jsonResponse({ error: 'race_status_failed' }, 500);
     }
     const { data: currentRace, error: currentError } = await client.from('races')
-      .select('status, scheduled_start_at, started_at').eq('id', race.id).single();
+      .select('status, scheduled_start_at, started_at, verification_started_at').eq('id', race.id).single();
     if (currentError) return jsonResponse({ error: 'race_status_failed' }, 500);
     const { data: participants, error: participantsError } = await client.from('race_participants')
       .select('profile_id, route_accepted_at, route_distance_m, elevation_gain_m, start_ready_at')
@@ -124,6 +122,9 @@ export default {
     return jsonResponse({
       raceId: race.id, status: currentRace.status, distanceKm: race.distance_km,
       scheduledStartAt: currentRace.scheduled_start_at, startedAt: currentRace.started_at,
+      // Each runner must pass their Selfie Check within 6 minutes of the match.
+      verificationDeadline: currentRace.verification_started_at
+        ? new Date(Date.parse(currentRace.verification_started_at) + 6 * 60 * 1000).toISOString() : null,
       serverTime: new Date().toISOString(),
       participants: (participants ?? []).map((participant) => ({
         handle: handles.get(participant.profile_id) ?? 'runner',
