@@ -78,7 +78,7 @@ export default {
     if (typeof body.raceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.raceId)) {
       return jsonResponse({ error: 'invalid_race_id' }, 400);
     }
-    if (!['snapshot', 'location', 'dnf'].includes(String(body.action))) {
+    if (!['snapshot', 'location', 'dnf', 'dismiss'].includes(String(body.action))) {
       return jsonResponse({ error: 'invalid_action' }, 400);
     }
 
@@ -163,6 +163,15 @@ export default {
         distanceFromRouteMeters: Number.isFinite(projected.nearestDistance) ? Math.round(projected.nearestDistance) : null,
         distanceFromStartMeters: Math.round(distance([longitude, latitude, 0], startPoint)),
         waitingForStart: !eligibleToStart });
+    }
+
+    if (body.action === 'dismiss') {
+      // Leave the results lobby; the pairing no longer appears on this runner's home.
+      if (!['completed', 'cancelled'].includes(race.status)) return jsonResponse({ error: 'race_not_finished' }, 409);
+      const { error } = await client.from('race_participants').update({ result_dismissed_at: new Date().toISOString() })
+        .eq('race_id', race.id).eq('profile_id', profile.id);
+      if (error) return jsonResponse({ error: 'dismiss_failed' }, 500);
+      return jsonResponse({ dismissed: true });
     }
 
     if (body.action === 'dnf') {

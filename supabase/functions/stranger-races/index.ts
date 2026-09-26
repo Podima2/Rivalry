@@ -38,6 +38,7 @@ export default {
       if (distanceKm === 10 && (Deno.env.get('WORLD_ID_ENVIRONMENT') ?? 'sandbox') === 'sandbox') {
         return jsonResponse({ error: 'official_id_unavailable_in_sandbox' }, 409);
       }
+      await client.rpc('dismiss_completed_races', { p_profile_id: profile.id });
       const { data: raceId, error } = await client.rpc('join_stranger_queue', {
         p_profile_id: profile.id, p_distance_km: distanceKm,
       });
@@ -47,15 +48,19 @@ export default {
 
     if (body.action === 'active') {
       const { data: memberships, error } = await client.from('race_participants')
-        .select('race_id').eq('profile_id', profile.id).order('created_at', { ascending: false }).limit(30);
+        .select('race_id, result_dismissed_at').eq('profile_id', profile.id).order('created_at', { ascending: false }).limit(30);
       if (error) return jsonResponse({ error: 'race_lookup_failed' }, 500);
       const ids = (memberships ?? []).map((item) => item.race_id);
       if (!ids.length) return jsonResponse({ raceId: null });
-      const { data: race, error: raceError } = await client.from('races')
-        .select('id, distance_km, status').in('id', ids).eq('mode', 'strangers')
-        .in('status', ['waiting_for_opponent', 'route_review', 'ready', 'verification', 'countdown', 'active'])
-        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      const { data: races, error: raceError } = await client.from('races')
+        .select('id, distance_km, status, completed_at').in('id', ids).eq('mode', 'strangers')
+        .in('status', ['waiting_for_opponent', 'route_review', 'ready', 'verification', 'countdown', 'active', 'completed'])
+        .order('created_at', { ascending: false });
       if (raceError) return jsonResponse({ error: 'race_lookup_failed' }, 500);
+      // A finished race stays in its results lobby until this runner leaves it.
+      const dismissed = new Set((memberships ?? []).filter((item) => item.result_dismissed_at).map((item) => item.race_id));
+      const race = (races ?? []).find((item) => item.status !== 'completed' ||
+        (!dismissed.has(item.id) && Date.parse(item.completed_at) > Date.now() - 24 * 60 * 60 * 1000));
       return jsonResponse(race ? { raceId: race.id, distanceKm: race.distance_km } : { raceId: null });
     }
 

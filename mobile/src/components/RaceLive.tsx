@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import MapView, { Circle, Marker, Polyline, type Region } from 'react-native-maps';
-import { forfeitRace, getRaceProgress, sendRaceLocation, type RaceProgressSnapshot } from '@/lib/raceProgressService';
+import { dismissRaceResult, forfeitRace, getRaceProgress, sendRaceLocation, type RaceProgressSnapshot } from '@/lib/raceProgressService';
 import { ProfileServiceError } from '@/lib/profileService';
 
 const colors = {
@@ -11,7 +11,7 @@ const colors = {
   vermilion: '#E24B35', green: '#4E6A54', yellow: '#A3721F',
 };
 
-type Props = { raceId: string; getAccessToken: () => Promise<string | null>; onBack: () => void };
+type Props = { raceId: string; getAccessToken: () => Promise<string | null>; onBack: () => void; onDone: () => void };
 
 function routeRegion(coordinates: [number, number, number][]): Region {
   const latitude = coordinates.map((coordinate) => coordinate[1]);
@@ -38,7 +38,8 @@ function formatDistance(meters: number) {
   return meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${meters} m`;
 }
 
-export default function RaceLive({ raceId, getAccessToken, onBack }: Props) {
+export default function RaceLive({ raceId, getAccessToken, onBack, onDone }: Props) {
+  const [leaving, setLeaving] = useState(false);
   const [snapshot, setSnapshot] = useState<RaceProgressSnapshot | null>(null);
   const [locationState, setLocationState] = useState('Connecting to GPS…');
   const [error, setError] = useState('');
@@ -170,6 +171,19 @@ export default function RaceLive({ raceId, getAccessToken, onBack }: Props) {
   const friendFixAgeSeconds = friendFix && snapshot
     ? Math.max(0, Math.floor((snapshot.receivedAt - Date.parse(friendFix.captured_at)) / 1000)) : null;
 
+  async function leaveResults() {
+    setLeaving(true);
+    try {
+      const token = await getAccessToken();
+      if (!token) throw new Error('No access token');
+      await dismissRaceResult(token, raceId);
+      onDone();
+    } catch {
+      setError('Couldn’t leave the results. Check the connection and try again.');
+      setLeaving(false);
+    }
+  }
+
   function confirmQuit() {
     Alert.alert('End your race?', `This will record a DNF. Your ${isStrangerRace ? 'opponent' : 'friend'} can keep running.`, [
       { text: 'Keep running', style: 'cancel' },
@@ -221,6 +235,11 @@ export default function RaceLive({ raceId, getAccessToken, onBack }: Props) {
         ) : <ActivityIndicator color={colors.vermilion} />}
 
         {self?.state === 'running' ? <Text accessibilityRole="alert" style={[styles.gpsState, locationState.includes('recording') && styles.gpsGood]}>{locationState}</Text> : null}
+        {snapshot?.status === 'completed' ? (
+          <Pressable accessibilityRole="button" disabled={leaving} onPress={() => void leaveResults()} style={[styles.doneButton, leaving && styles.disabled]}>
+            {leaving ? <ActivityIndicator color={colors.white} /> : <Text style={styles.doneText}>Done · back to races</Text>}
+          </Pressable>
+        ) : null}
         {resultAtRisk ? <Text style={styles.gpsState}>{resultAtRisk}</Text> : null}
         {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
 
@@ -294,6 +313,9 @@ const styles = StyleSheet.create({
   friendMap: { height: 190 },
   emptyMap: { color: colors.muted, fontSize: 12, paddingVertical: 24 },
   positionAge: { color: colors.muted, fontSize: 11, marginBottom: 8 },
+  doneButton: { minHeight: 52, backgroundColor: colors.vermilion, alignItems: 'center', justifyContent: 'center', marginTop: 16 },
+  doneText: { color: colors.white, fontWeight: '800', fontSize: 14 },
+  disabled: { opacity: 0.45 },
   quitButton: { borderWidth: 1, borderColor: colors.vermilion, alignItems: 'center', padding: 15, marginTop: 20 },
   quitText: { color: colors.vermilion, fontWeight: '800', fontSize: 13 },
   footnote: { color: colors.muted, fontSize: 11, lineHeight: 17, marginTop: 20 },

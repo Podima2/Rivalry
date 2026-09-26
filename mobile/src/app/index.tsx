@@ -162,8 +162,16 @@ export default function HomeScreen() {
         if (!accessToken) return;
         const status = await getFriendRaceStatus(accessToken, activeRaceId);
         if (!active) return;
+        if (status.status === 'cancelled') {
+          setActiveRaceId(null);
+          setActiveRaceStatus(null);
+          setInviteCode(null);
+          setSetupNotice('That friend race was cancelled. Create or join a new invite to race again.');
+          return;
+        }
         setActiveRaceStatus(status);
-        if (status.status === 'active' && !friendLiveAutoOpened.current && strangerRestoreComplete && !strangerRaceId && raceMode === 'friends') {
+        // Both runners land in the results lobby, including after a restart.
+        if ((status.status === 'active' || status.status === 'completed') && !friendLiveAutoOpened.current && strangerRestoreComplete && !strangerRaceId && raceMode === 'friends') {
           friendLiveAutoOpened.current = true;
           setOpenRaceMode('friends');
           setShowLiveRace(true);
@@ -214,7 +222,7 @@ export default function HomeScreen() {
         }
         setStrangerRaceStatus(status);
         if (status.status !== 'completed') setRaceDistance(status.distanceKm);
-        if (status.status === 'active' && !strangerLiveAutoOpened.current) {
+        if ((status.status === 'active' || status.status === 'completed') && !strangerLiveAutoOpened.current) {
           strangerLiveAutoOpened.current = true;
           setOpenRaceMode('strangers');
           setShowLiveRace(true);
@@ -535,7 +543,20 @@ export default function HomeScreen() {
     }
 
     if (showLiveRace && openedRaceId) {
-      return <RaceLive raceId={openedRaceId} getAccessToken={getAccessToken} onBack={() => setShowLiveRace(false)} />;
+      return <RaceLive raceId={openedRaceId} getAccessToken={getAccessToken} onBack={() => setShowLiveRace(false)}
+        onDone={() => {
+          // Leaving the results lobby ends this pairing on this phone.
+          setShowLiveRace(false);
+          if (openRaceMode === 'strangers') {
+            setStrangerRaceId(null);
+            setStrangerRaceStatus(null);
+          } else {
+            setActiveRaceId(null);
+            setActiveRaceStatus(null);
+            setInviteCode(null);
+          }
+          setSetupNotice('');
+        }} />;
     }
 
     if (showWorldVerificationTest) {

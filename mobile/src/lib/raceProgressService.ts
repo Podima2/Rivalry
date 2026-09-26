@@ -66,6 +66,10 @@ export async function sendRaceLocation(accessToken: string, raceId: string, lati
   };
 }
 
+export async function dismissRaceResult(accessToken: string, raceId: string) {
+  return request(accessToken, { action: 'dismiss', raceId });
+}
+
 export async function forfeitRace(accessToken: string, raceId: string) {
   return request(accessToken, { action: 'dnf', raceId });
 }

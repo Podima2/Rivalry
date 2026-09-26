@@ -61,23 +61,25 @@ export default {
     if (body.action === 'active') {
       const { data: memberships, error: membershipError } = await client
         .from('race_participants')
-        .select('race_id')
+        .select('race_id, result_dismissed_at')
         .eq('profile_id', profile.id)
         .order('created_at', { ascending: false })
         .limit(20);
       if (membershipError) return jsonResponse({ error: 'race_lookup_failed' }, 500);
       const raceIds = (memberships ?? []).map((membership) => membership.race_id);
       if (!raceIds.length) return jsonResponse({ raceId: null });
-      const { data: race, error: raceError } = await client
+      const { data: races, error: raceError } = await client
         .from('races')
-        .select('id, distance_km, status')
+        .select('id, distance_km, status, completed_at')
         .in('id', raceIds)
         .eq('mode', 'friends')
         .in('status', ['waiting_for_opponent', 'route_review', 'ready', 'countdown', 'active', 'completed'])
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .order('created_at', { ascending: false });
       if (raceError) return jsonResponse({ error: 'race_lookup_failed' }, 500);
+      // A finished race stays in its results lobby until this runner leaves it.
+      const dismissed = new Set((memberships ?? []).filter((item) => item.result_dismissed_at).map((item) => item.race_id));
+      const race = (races ?? []).find((item) => item.status !== 'completed' ||
+        (!dismissed.has(item.id) && Date.parse(item.completed_at) > Date.now() - 24 * 60 * 60 * 1000));
       return jsonResponse(race
         ? { raceId: race.id, distanceKm: race.distance_km, status: race.status }
         : { raceId: null });
@@ -122,6 +124,7 @@ export default {
         return jsonResponse({ error: 'race_join_failed' }, 500);
       }
       if (typeof raceId !== 'string') return jsonResponse({ error: 'race_join_failed' }, 500);
+      await client.rpc('dismiss_completed_races', { p_profile_id: profile.id });
       const { data: race, error: raceError } = await client.from('races').select('distance_km').eq('id', raceId).single();
       if (raceError) return jsonResponse({ error: 'race_join_failed' }, 500);
       return jsonResponse({ raceId, distanceKm: race.distance_km, status: 'route_review' });
