@@ -1,4 +1,5 @@
 import { ProfileServiceError } from '@/lib/profileService';
+import type { RoutePreview } from '@/lib/routeService';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -9,6 +10,8 @@ export type RaceProgressSnapshot = {
   receivedAt: number;
   status: 'active' | 'completed';
   distanceKm: number;
+  startedAt: string | null;
+  serverTime: string | null;
   ownRoute: [number, number, number][];
   participants: {
     handle: string;
@@ -64,6 +67,18 @@ export async function sendRaceLocation(accessToken: string, raceId: string, lati
     distanceFromRouteMeters: typeof body.distanceFromRouteMeters === 'number' ? body.distanceFromRouteMeters : null,
     distanceFromStartMeters: typeof body.distanceFromStartMeters === 'number' ? body.distanceFromStartMeters : null,
   };
+}
+
+/** This runner's own saved route for the race, or null if none is generated yet. */
+export async function getOwnRoute(accessToken: string, raceId: string): Promise<(RoutePreview & { accepted: boolean }) | null> {
+  try {
+    const body = await request(accessToken, { action: 'route', raceId });
+    if (body.raceId !== raceId || !Array.isArray(body.coordinates)) return null;
+    return body as RoutePreview & { accepted: boolean };
+  } catch (cause) {
+    if (cause instanceof ProfileServiceError && cause.code === 'route_missing') return null;
+    throw cause;
+  }
 }
 
 export async function dismissRaceResult(accessToken: string, raceId: string) {

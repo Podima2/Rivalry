@@ -20,7 +20,7 @@ function Badge({ handle, tone }: { handle: string; tone: 'self' | 'opponent' }) 
   );
 }
 
-/** "It's a match" moment: both runner badges fly in, collide, and a burst rings out. */
+/** "It's on" moment: both runner badges fly in, collide, and a burst rings out. */
 export default function MatchCelebration({ visible, selfHandle, opponentHandle, distanceKm, mode, onContinue }: Props) {
   const slide = useState(() => new Animated.Value(0))[0];
   const burst = useState(() => new Animated.Value(0))[0];
@@ -68,12 +68,12 @@ export default function MatchCelebration({ visible, selfHandle, opponentHandle, 
           </Animated.View>
         </View>
         <Animated.View style={{ alignItems: 'center', opacity: title, transform: [{ scale: titleScale }] }}>
-          <Text style={styles.kicker}>{mode === 'strangers' ? 'RUNNER FOUND' : 'YOUR FRIEND IS IN'}</Text>
-          <Text style={styles.title}>It’s a match.</Text>
-          <Text style={styles.subtitle}>You’re racing @{opponentHandle} over {distanceKm} km.</Text>
+          <Text style={styles.kicker}>{mode === 'strangers' ? 'RIVAL FOUND' : 'CHALLENGE ACCEPTED'}</Text>
+          <Text style={styles.title}>It’s on.</Text>
+          <Text style={styles.subtitle}>You vs @{opponentHandle} · {distanceKm} km{'\n'}Same clock, different streets. Fastest finish wins.</Text>
         </Animated.View>
         <Pressable accessibilityRole="button" onPress={onContinue} style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}>
-          <Text style={styles.buttonText}>{mode === 'strangers' ? 'Let’s verify and go' : 'Let’s pick routes'}</Text>
+          <Text style={styles.buttonText}>{mode === 'strangers' ? 'Verify and take your mark' : 'Take your mark'}</Text>
         </Pressable>
       </View>
     </Modal>

@@ -23,7 +23,7 @@ function distance(a: Coordinate, b: Coordinate) {
 }
 
 function validRoute(value: unknown): value is Coordinate[] {
-  return Array.isArray(value) && value.length >= 2 && value.length <= 5000 && value.every((item) =>
+  return Array.isArray(value) && value.length >= 2 && value.length <= 10000 && value.every((item) =>
     Array.isArray(item) && item.length >= 2 &&
     typeof item[0] === 'number' && Number.isFinite(item[0]) &&
     typeof item[1] === 'number' && Number.isFinite(item[1]));
@@ -78,7 +78,7 @@ export default {
     if (typeof body.raceId !== 'string' || !/^[0-9a-f-]{36}$/i.test(body.raceId)) {
       return jsonResponse({ error: 'invalid_race_id' }, 400);
     }
-    if (!['snapshot', 'location', 'dnf', 'dismiss'].includes(String(body.action))) {
+    if (!['snapshot', 'location', 'dnf', 'dismiss', 'route'].includes(String(body.action))) {
       return jsonResponse({ error: 'invalid_action' }, 400);
     }
 
@@ -165,6 +165,27 @@ export default {
         waitingForStart: !eligibleToStart });
     }
 
+    if (body.action === 'route') {
+      // The caller's own saved route only; never the opponent's geometry or start.
+      if (race.status === 'cancelled') return jsonResponse({ error: 'race_unavailable' }, 404);
+      const { data: saved, error: savedError } = await client.from('race_participants')
+        .select('route_coordinates, route_elevation_profile, route_distance_m, route_shape, elevation_gain_m, route_accepted_at')
+        .eq('race_id', race.id).eq('profile_id', profile.id).single();
+      if (savedError) return jsonResponse({ error: 'route_lookup_failed' }, 500);
+      if (!validRoute(saved.route_coordinates)) return jsonResponse({ error: 'route_missing' }, 404);
+      return jsonResponse({
+        raceId: race.id,
+        targetDistanceKm: race.distance_km,
+        distanceMeters: saved.route_distance_m,
+        routeShape: saved.route_shape,
+        elevationGainMeters: Number(saved.elevation_gain_m ?? 0),
+        loopRepeats: race.distance_km === 10 ? 2 : 1,
+        coordinates: saved.route_coordinates,
+        elevationProfile: saved.route_elevation_profile ?? [],
+        accepted: saved.route_accepted_at !== null,
+      });
+    }
+
     if (body.action === 'dismiss') {
       // Leave the results lobby; the pairing no longer appears on this runner's home.
       if (!['completed', 'cancelled'].includes(race.status)) return jsonResponse({ error: 'race_not_finished' }, 409);
@@ -208,6 +229,8 @@ export default {
       mode: race.mode,
       status: race.status,
       distanceKm: race.distance_km,
+      startedAt: race.started_at,
+      serverTime: new Date().toISOString(),
       ownRoute: own.route_coordinates,
       participants: participants.map((participant) => ({
         handle: handles.get(participant.profile_id) ?? 'runner',

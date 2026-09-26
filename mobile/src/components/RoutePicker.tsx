@@ -6,6 +6,7 @@ import MapView, { Marker, Polyline, type Region } from 'react-native-maps';
 import { acceptFriendRoute, getFriendRaceStatus, type FriendRaceStatus } from '@/lib/raceService';
 import { acceptStrangerRoute, getStrangerRaceStatus, type StrangerRaceStatus } from '@/lib/strangerRaceService';
 import { createRoutePreview, type RoutePreview } from '@/lib/routeService';
+import { getOwnRoute } from '@/lib/raceProgressService';
 import { ProfileServiceError } from '@/lib/profileService';
 
 const colors = {
@@ -72,6 +73,22 @@ export default function RoutePicker({ raceId, mode = 'friends', getAccessToken, 
     const timer = setInterval(() => void poll(), 5000);
     return () => { active = false; clearInterval(timer); };
   }, [getAccessToken, mode, raceId]);
+
+  // Reopen the route this runner already generated instead of asking for a new start.
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const token = await getAccessToken();
+        const saved = token ? await getOwnRoute(token, raceId) : null;
+        if (!active || !saved || saved.coordinates.length < 2) return;
+        const [longitude, latitude] = saved.coordinates[0];
+        setStart((current) => current ?? { latitude, longitude });
+        setRoute((current) => current ?? saved);
+      } catch { /* A fresh start is still available. */ }
+    })();
+    return () => { active = false; };
+  }, [getAccessToken, raceId]);
 
   const region = useMemo<Region | undefined>(() => start ? ({
     latitude: start.latitude,
@@ -181,7 +198,8 @@ export default function RoutePicker({ raceId, mode = 'friends', getAccessToken, 
   const acceptedByMe = raceStatus?.participants.find((participant) => participant.isSelf)?.routeAccepted ?? false;
   const bothRoutesAccepted = raceStatus?.status === 'ready' || raceStatus?.status === 'verification';
   const targetMeters = (raceStatus?.distanceKm ?? route?.targetDistanceKm ?? 0) * 1000;
-  const distanceTolerance = Math.max(50, Math.round(targetMeters * 0.05));
+  // Routes are trimmed to the exact preset; the server accepts within 5 m.
+  const distanceTolerance = 5;
   const myDistanceIsOff = route !== null && targetMeters > 0 && Math.abs(route.distanceMeters - targetMeters) > distanceTolerance;
   const otherDistanceIsOff = otherParticipant?.routeDistanceMeters != null && targetMeters > 0 &&
     Math.abs(otherParticipant.routeDistanceMeters - targetMeters) > distanceTolerance;
@@ -189,6 +207,11 @@ export default function RoutePicker({ raceId, mode = 'friends', getAccessToken, 
     Math.abs(route.distanceMeters - otherParticipant.routeDistanceMeters) > distanceTolerance;
   const distancesMatch = !myDistanceIsOff && !otherDistanceIsOff && !routeGapIsOff;
   const coordinates = route?.coordinates.map(([longitude, latitude]) => ({ latitude, longitude })) ?? [];
+  // A trimmed loop finishes on the route just before it would return to the start.
+  const lastPoint = coordinates[coordinates.length - 1];
+  const finishPoint = lastPoint && coordinates.length > 1 &&
+    Math.hypot(lastPoint.latitude - coordinates[0].latitude, (lastPoint.longitude - coordinates[0].longitude) * Math.cos(lastPoint.latitude * Math.PI / 180)) * 111_320 > 30
+    ? lastPoint : null;
   const turnaround = route?.routeShape === 'out_and_back'
     ? coordinates[route.loopRepeats === 2 ? Math.floor((coordinates.length + 1) / 4) : Math.floor(coordinates.length / 2)]
     : null;
@@ -239,6 +262,7 @@ export default function RoutePicker({ raceId, mode = 'friends', getAccessToken, 
               >
                 {coordinates.length > 1 ? <Polyline coordinates={coordinates} strokeColor={colors.vermilion} strokeWidth={5} /> : null}
                 {turnaround ? <Marker coordinate={turnaround} pinColor={colors.green} title="Turn around" description="Follow the same path back to the start" /> : null}
+                {finishPoint ? <Marker coordinate={finishPoint} pinColor={colors.ink} title="Finish" description="Your exact race distance ends here" /> : null}
                 <Marker
                   coordinate={start}
                   draggable

@@ -5,11 +5,12 @@ import { corsHeaders, jsonResponse } from '../_shared/http.ts';
 type Coordinate = [number, number, number];
 type RouteFeature = {
   geometry?: { coordinates?: unknown };
-  properties?: {
-    ascent?: unknown;
-    summary?: { distance?: unknown };
-  };
+  properties?: { summary?: { distance?: unknown } };
 };
+
+// Every route is cut to exactly the preset along its own path, so both runners
+// cover the same distance. The database accepts routes within this tolerance.
+const DISTANCE_TOLERANCE_M = 5;
 
 function getAdminClient() {
   const url = Deno.env.get('SUPABASE_URL');
@@ -19,11 +20,13 @@ function getAdminClient() {
 }
 
 function validCoordinates(value: unknown): value is Coordinate[] {
-  return Array.isArray(value) && value.length >= 2 && value.length <= 5000 && value.every((point) =>
+  return Array.isArray(value) && value.length >= 2 && value.length <= 10000 && value.every((point) =>
     Array.isArray(point) && point.length >= 3 && point.slice(0, 3).every((part) => typeof part === 'number' && Number.isFinite(part))
   );
 }
 
+// Same haversine as race-progress, so the measured route length is exactly the
+// length that live progress is scored against.
 function distanceBetweenMeters(a: Coordinate, b: Coordinate) {
   const radians = Math.PI / 180;
   const lat1 = a[1] * radians;
@@ -34,54 +37,53 @@ function distanceBetweenMeters(a: Coordinate, b: Coordinate) {
   return 6_371_000 * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
+function pathLength(coordinates: Coordinate[]) {
+  let total = 0;
+  for (let index = 1; index < coordinates.length; index += 1) total += distanceBetweenMeters(coordinates[index - 1], coordinates[index]);
+  return total;
+}
+
 function buildElevationProfile(coordinates: Coordinate[]) {
   let distanceMeters = 0;
+  let ascentMeters = 0;
   const profile = coordinates.map((coordinate, index) => {
-    if (index > 0) distanceMeters += distanceBetweenMeters(coordinates[index - 1], coordinate);
+    if (index > 0) {
+      distanceMeters += distanceBetweenMeters(coordinates[index - 1], coordinate);
+      ascentMeters += Math.max(0, coordinate[2] - coordinates[index - 1][2]);
+    }
     return { distanceMeters: Math.round(distanceMeters), elevationMeters: coordinate[2] };
   });
-
-  let calculatedAscent = 0;
-  for (let index = 1; index < profile.length; index += 1) {
-    const rise = profile[index].elevationMeters - profile[index - 1].elevationMeters;
-    if (rise > 0) calculatedAscent += rise;
-  }
-
-  return { profile, distanceMeters, calculatedAscent };
+  return { profile, distanceMeters, ascentMeters };
 }
 
-function distanceToleranceMeters(targetMeters: number) {
-  return Math.max(50, Math.round(targetMeters * 0.05));
-}
-
-function routeDistanceIsFair(distanceMeters: number, targetMeters: number, otherDistanceMeters: number | null) {
-  const tolerance = distanceToleranceMeters(targetMeters);
-  return Math.abs(distanceMeters - targetMeters) <= tolerance &&
-    (otherDistanceMeters === null || Math.abs(distanceMeters - otherDistanceMeters) <= tolerance);
-}
-
-function buildOutAndBack(coordinates: Coordinate[], distanceMeters: number): Coordinate[] | null {
-  const outward: Coordinate[] = [coordinates[0]];
-  let remainingMeters = distanceMeters / 2;
+/** The path's first `meters`, ending at an interpolated point; null if the path is shorter. */
+function truncateToDistance(coordinates: Coordinate[], meters: number): Coordinate[] | null {
+  const result: Coordinate[] = [coordinates[0]];
+  let remaining = meters;
   for (let index = 1; index < coordinates.length; index += 1) {
     const previous = coordinates[index - 1];
     const next = coordinates[index];
-    const segmentMeters = distanceBetweenMeters(previous, next);
-    if (segmentMeters <= 0) continue;
-    if (segmentMeters >= remainingMeters) {
-      const fraction = remainingMeters / segmentMeters;
-      outward.push([
+    const segment = distanceBetweenMeters(previous, next);
+    if (segment <= 0) continue;
+    if (segment >= remaining) {
+      const fraction = remaining / segment;
+      result.push([
         previous[0] + (next[0] - previous[0]) * fraction,
         previous[1] + (next[1] - previous[1]) * fraction,
         previous[2] + (next[2] - previous[2]) * fraction,
       ]);
-      const result = [...outward, ...outward.slice(0, -1).reverse()];
-      return validCoordinates(result) ? result : null;
+      return result;
     }
-    outward.push(next);
-    remainingMeters -= segmentMeters;
+    result.push(next);
+    remaining -= segment;
   }
   return null;
+}
+
+/** Run out along the path for half the distance, then back the same way. */
+function buildOutAndBack(coordinates: Coordinate[], meters: number): Coordinate[] | null {
+  const outward = truncateToDistance(coordinates, meters / 2);
+  return outward ? [...outward, ...outward.slice(0, -1).reverse()] : null;
 }
 
 export default {
@@ -148,28 +150,20 @@ export default {
 
     const targetDistanceKm = race.distance_km as 1 | 3 | 5 | 10;
     const targetMeters = targetDistanceKm * 1000;
-    const { data: otherParticipants, error: otherParticipantError } = await client
-      .from('race_participants')
-      .select('route_distance_m')
-      .eq('race_id', race.id)
-      .neq('profile_id', profile.id);
-    if (otherParticipantError) return jsonResponse({ error: 'participant_lookup_failed' }, 500);
-    const otherDistanceMeters = otherParticipants?.[0]?.route_distance_m ?? null;
-    const otherFairDistanceMeters = typeof otherDistanceMeters === 'number' &&
-      Math.abs(otherDistanceMeters - targetMeters) <= distanceToleranceMeters(targetMeters)
-      ? otherDistanceMeters : null;
+    const isDoubleLoop = targetDistanceKm === 10;
+    const lapMeters = targetMeters / (isDoubleLoop ? 2 : 1);
     const sameStart = typeof participant.start_latitude === 'number' && typeof participant.start_longitude === 'number' &&
       Math.abs(participant.start_latitude - input.latitude) < 0.00001 &&
       Math.abs(participant.start_longitude - input.longitude) < 0.00001;
     if (input.forceRefresh !== true && participant.route_coordinates && participant.route_distance_m && participant.elevation_gain_m !== null && sameStart &&
-        routeDistanceIsFair(participant.route_distance_m, targetMeters, otherFairDistanceMeters)) {
+        Math.abs(participant.route_distance_m - targetMeters) <= DISTANCE_TOLERANCE_M) {
       return jsonResponse({
         raceId: race.id,
         targetDistanceKm,
         distanceMeters: participant.route_distance_m,
         routeShape: participant.route_shape,
         elevationGainMeters: Number(participant.elevation_gain_m),
-        loopRepeats: targetDistanceKm === 10 ? 2 : 1,
+        loopRepeats: isDoubleLoop ? 2 : 1,
         coordinates: participant.route_coordinates,
         elevationProfile: participant.route_elevation_profile,
       });
@@ -182,18 +176,13 @@ export default {
     if (claimError) return jsonResponse({ error: 'route_generation_failed' }, 500);
     if (!generationClaimed) return jsonResponse({ error: 'not_a_race_participant' }, 403);
 
-    const isDoubleLoop = targetDistanceKm === 10;
-    const loopTargetMeters = targetMeters / (isDoubleLoop ? 2 : 1);
-    const desiredMeters = otherFairDistanceMeters ?? targetMeters;
-    let requestedLoopMeters = desiredMeters / (isDoubleLoop ? 2 : 1);
     const randomSeed = crypto.getRandomValues(new Uint8Array(1))[0] % 91;
-    type Candidate = { coordinates: Coordinate[]; stats: ReturnType<typeof buildElevationProfile>; distanceMeters: number; ascentMeters: number; shape: 'loop' | 'out_and_back' };
-    let chosenRoute: Candidate | null = null;
-    let fallbackRoute: Candidate | null = null;
+    // Ask for a slightly long loop: anything at least one lap long is trimmed
+    // to the exact distance, ending at a finish point on the route.
+    let requestedLapMeters = Math.min(5900, lapMeters * 1.08);
+    let chosen: { coordinates: Coordinate[]; shape: 'loop' | 'out_and_back' } | null = null;
 
-    // ORS round_trip.length is a request, not a guarantee. Give the loop one
-    // adjusted attempt, then use a measured out-and-back path if needed.
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt < 2 && !chosen; attempt += 1) {
       let providerResponse: Response;
       try {
         providerResponse = await fetch('https://api.heigit.org/openrouteservice/v2/directions/foot-walking/geojson', {
@@ -207,7 +196,7 @@ export default {
             coordinates: [[input.longitude, input.latitude]],
             elevation: true,
             instructions: false,
-            options: { round_trip: { length: Math.round(requestedLoopMeters), points: 3, seed: randomSeed } },
+            options: { round_trip: { length: Math.round(requestedLapMeters), points: 3, seed: randomSeed } },
           }),
           signal: AbortSignal.timeout(20_000),
         });
@@ -224,62 +213,38 @@ export default {
       } catch {
         return jsonResponse({ error: 'route_provider_invalid_response' }, 502);
       }
-      const feature = providerResult.features?.[0];
-      const rawCoordinates = feature?.geometry?.coordinates;
-      if (!validCoordinates(rawCoordinates)) return jsonResponse({ error: 'route_provider_missing_elevation' }, 502);
+      const lap = providerResult.features?.[0]?.geometry?.coordinates;
+      if (!validCoordinates(lap)) return jsonResponse({ error: 'route_provider_missing_elevation' }, 502);
 
-      const stats = buildElevationProfile(rawCoordinates);
-      const providerDistance = feature?.properties?.summary?.distance;
-      const distanceMeters = typeof providerDistance === 'number' && Number.isFinite(providerDistance) && providerDistance > 0
-        ? providerDistance : stats.distanceMeters;
-      const providerAscent = feature?.properties?.ascent;
-      const ascentMeters = typeof providerAscent === 'number' && Number.isFinite(providerAscent) && providerAscent >= 0
-        ? providerAscent : stats.calculatedAscent;
-      const fullDistanceMeters = Math.round(distanceMeters * (isDoubleLoop ? 2 : 1));
-      if (routeDistanceIsFair(fullDistanceMeters, targetMeters, otherFairDistanceMeters)) {
-        chosenRoute = { coordinates: rawCoordinates, stats, distanceMeters, ascentMeters, shape: 'loop' };
+      const lapLength = pathLength(lap);
+      const fullPath = isDoubleLoop ? [...lap, ...lap.slice(1)] : lap;
+      const trimmed = truncateToDistance(fullPath, targetMeters);
+      if (trimmed) {
+        chosen = { coordinates: trimmed, shape: 'loop' };
         break;
       }
-      if (!fallbackRoute) {
-        const outAndBack = buildOutAndBack(rawCoordinates, loopTargetMeters);
-        if (outAndBack) {
-          const fallbackStats = buildElevationProfile(outAndBack);
-          const fallbackFullMeters = Math.round(fallbackStats.distanceMeters * (isDoubleLoop ? 2 : 1));
-          if (routeDistanceIsFair(fallbackFullMeters, targetMeters, otherFairDistanceMeters)) {
-            fallbackRoute = {
-              coordinates: outAndBack,
-              stats: fallbackStats,
-              distanceMeters: fallbackStats.distanceMeters,
-              ascentMeters: fallbackStats.calculatedAscent,
-              shape: 'out_and_back',
-            };
-          }
-        }
+      if (attempt === 1) {
+        // Still short: run out along the loop and back for an exact distance.
+        const outAndBack = buildOutAndBack(lap, lapMeters);
+        if (outAndBack) chosen = { coordinates: isDoubleLoop ? [...outAndBack, ...outAndBack.slice(1)] : outAndBack, shape: 'out_and_back' };
       }
-      requestedLoopMeters = Math.max(loopTargetMeters * 0.5, Math.min(loopTargetMeters * 1.5, 5900,
-        requestedLoopMeters * desiredMeters / fullDistanceMeters));
+      requestedLapMeters = Math.min(5900, requestedLapMeters * (lapMeters * 1.08) / Math.max(1, lapLength));
     }
-    chosenRoute ??= fallbackRoute;
-    if (!chosenRoute) return jsonResponse({ error: 'route_distance_unavailable' }, 422);
+    if (!chosen) return jsonResponse({ error: 'route_distance_unavailable' }, 422);
 
-    const { coordinates: rawCoordinates, stats: baseStats, distanceMeters: baseDistanceMeters, ascentMeters: baseAscentMeters, shape: routeShape } = chosenRoute;
-    const fullCoordinates = isDoubleLoop
-      ? [...rawCoordinates, ...rawCoordinates.slice(1)]
-      : rawCoordinates;
-    const fullDistanceMeters = Math.round(baseDistanceMeters * (isDoubleLoop ? 2 : 1));
-    const fullAscentMeters = Math.round(baseAscentMeters * (isDoubleLoop ? 2 : 1) * 100) / 100;
-    const fullElevationProfile = isDoubleLoop
-      ? [...baseStats.profile, ...baseStats.profile.slice(1).map((point) => ({ ...point, distanceMeters: point.distanceMeters + Math.round(baseDistanceMeters) }))]
-      : baseStats.profile;
+    const stats = buildElevationProfile(chosen.coordinates);
+    const distanceMeters = Math.round(stats.distanceMeters);
+    if (Math.abs(distanceMeters - targetMeters) > DISTANCE_TOLERANCE_M) return jsonResponse({ error: 'route_distance_unavailable' }, 422);
+    const elevationGainMeters = Math.round(stats.ascentMeters * 100) / 100;
 
     const { error: updateError } = await client
       .from('race_participants')
       .update({
-        route_coordinates: fullCoordinates,
-        route_elevation_profile: fullElevationProfile,
-        route_distance_m: fullDistanceMeters,
-        route_shape: routeShape,
-        elevation_gain_m: fullAscentMeters,
+        route_coordinates: chosen.coordinates,
+        route_elevation_profile: stats.profile,
+        route_distance_m: distanceMeters,
+        route_shape: chosen.shape,
+        elevation_gain_m: elevationGainMeters,
         start_latitude: input.latitude,
         start_longitude: input.longitude,
         route_accepted_at: null,
@@ -293,12 +258,12 @@ export default {
     return jsonResponse({
       raceId: race.id,
       targetDistanceKm,
-      distanceMeters: fullDistanceMeters,
-      routeShape,
-      elevationGainMeters: fullAscentMeters,
+      distanceMeters,
+      routeShape: chosen.shape,
+      elevationGainMeters,
       loopRepeats: isDoubleLoop ? 2 : 1,
-      coordinates: fullCoordinates,
-      elevationProfile: fullElevationProfile,
+      coordinates: chosen.coordinates,
+      elevationProfile: stats.profile,
     });
   },
 };

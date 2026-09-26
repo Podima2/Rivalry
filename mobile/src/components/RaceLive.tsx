@@ -5,6 +5,7 @@ import * as Location from 'expo-location';
 import MapView, { Circle, Marker, Polyline, type Region } from 'react-native-maps';
 import { dismissRaceResult, forfeitRace, getRaceProgress, sendRaceLocation, type RaceProgressSnapshot } from '@/lib/raceProgressService';
 import { ProfileServiceError } from '@/lib/profileService';
+import RaceTrack from '@/components/RaceTrack';
 
 const colors = {
   paper: '#F4F0E8', white: '#FFFEFC', ink: '#292722', muted: '#706B63', line: '#C9C0B3',
@@ -160,7 +161,8 @@ export default function RaceLive({ raceId, getAccessToken, onBack, onDone }: Pro
     latitudeDelta: 0.008,
     longitudeDelta: 0.008,
   } : region;
-  const resultAtRisk = self?.state === 'running' && self.offRouteMs + self.gpsGapMs > 0
+  // Warn only when a runner is halfway to a validity limit.
+  const resultAtRisk = self?.state === 'running' && (self.offRouteMs > 30_000 || self.longestGpsGapMs > 60_000 || self.gpsGapMs > 30_000)
     ? `Result at risk · ${Math.round(self.offRouteMs / 1000)}s off route (limit 60s), longest GPS gap ${Math.round(self.longestGpsGapMs / 1000)}s (limit 120s).`
     : null;
   const endedCopy = (participant: typeof self, who: string) => participant?.dnfReason === 'inactive'
@@ -219,20 +221,26 @@ export default function RaceLive({ raceId, getAccessToken, onBack, onDone }: Pro
               : 'Keep Rivalry open for live GPS updates. Your friend can see your current position and progress.'}</Text>
 
         {snapshot ? (
-          <View style={styles.stats}>
+          <RaceTrack
+            runners={snapshot.participants}
+            distanceKm={snapshot.distanceKm}
+            startedAt={snapshot.startedAt}
+            serverOffsetMs={snapshot.serverTime ? Date.parse(snapshot.serverTime) - snapshot.receivedAt : 0}
+            live={snapshot.status === 'active'}
+          />
+        ) : <ActivityIndicator color={colors.vermilion} />}
+        {snapshot?.status === 'completed' ? (
+          <View style={styles.results}>
             {[self, friend].filter(Boolean).map((participant) => participant && (
-              <View key={participant.handle} style={styles.runnerRow}>
-                <View style={styles.runnerTop}>
-                  <Text style={styles.runnerName}>{participant.isSelf ? 'YOU' : `@${participant.handle}`}</Text>
-                  <Text style={styles.runnerValue}>{participant.state === 'dnf' ? 'DNF' : participant.state === 'finished'
-                    ? formatTime(participant.elapsedMs) : `${(participant.progressMeters / 1000).toFixed(2)} / ${(participant.routeDistanceMeters / 1000).toFixed(2)} km`}</Text>
-                </View>
-                <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.min(100, Math.round(participant.progressMeters / Math.max(1, participant.routeDistanceMeters) * 100))}%` }]} /></View>
-                {participant.outcome ? <Text style={styles.result}>{participant.outcome.toUpperCase()}</Text> : null}
+              <View key={participant.handle} style={styles.resultRow}>
+                <Text style={styles.runnerName}>{participant.isSelf ? 'YOU' : `@${participant.handle}`}</Text>
+                <Text style={[styles.result, participant.outcome === 'win' && styles.resultWin]}>
+                  {participant.outcome?.toUpperCase() ?? '—'}{participant.state === 'finished' ? ` · ${formatTime(participant.elapsedMs)}` : ''}
+                </Text>
               </View>
             ))}
           </View>
-        ) : <ActivityIndicator color={colors.vermilion} />}
+        ) : null}
 
         {self?.state === 'running' ? <Text accessibilityRole="alert" style={[styles.gpsState, locationState.includes('recording') && styles.gpsGood]}>{locationState}</Text> : null}
         {snapshot?.status === 'completed' ? (
@@ -293,14 +301,11 @@ const styles = StyleSheet.create({
   eyebrow: { color: colors.vermilion, fontSize: 10, fontWeight: '900', letterSpacing: 1.3 },
   title: { color: colors.ink, fontFamily: 'serif', fontSize: 38, lineHeight: 43, marginTop: 9 },
   copy: { color: colors.muted, fontSize: 14, lineHeight: 20, marginTop: 11, marginBottom: 18 },
-  stats: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 16 },
-  runnerRow: { marginBottom: 16 },
-  runnerTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  runnerName: { color: colors.ink, fontSize: 11, fontWeight: '900' },
-  runnerValue: { color: colors.ink, fontSize: 12, fontWeight: '800' },
-  progressTrack: { height: 8, backgroundColor: colors.paper, marginTop: 9 },
-  progressFill: { height: 8, backgroundColor: colors.vermilion },
-  result: { color: colors.green, fontSize: 10, fontWeight: '900', marginTop: 7 },
+  results: { backgroundColor: colors.white, borderWidth: 1, borderTopWidth: 0, borderColor: colors.line, paddingHorizontal: 16, paddingBottom: 8 },
+  resultRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderTopWidth: 1, borderTopColor: colors.line },
+  runnerName: { color: colors.ink, fontSize: 11, fontWeight: '900', letterSpacing: 1 },
+  result: { color: colors.muted, fontSize: 11, fontWeight: '900', letterSpacing: 1 },
+  resultWin: { color: colors.green },
   gpsState: { color: colors.yellow, backgroundColor: '#F6E8C9', padding: 12, fontSize: 12, marginTop: 14 },
   gpsGood: { color: colors.green, backgroundColor: '#E9F0E8' },
   error: { color: '#A42F20', fontSize: 12, marginTop: 12 },

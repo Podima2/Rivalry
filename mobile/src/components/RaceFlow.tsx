@@ -6,6 +6,7 @@ import { getActiveStrangerRace, getStrangerRaceStatus, leaveStrangerRace, setStr
 import { ProfileServiceError } from '@/lib/profileService';
 import MatchCelebration from '@/components/MatchCelebration';
 import RaceLive from '@/components/RaceLive';
+import ReadyStep from '@/components/ReadyStep';
 import RoutePicker from '@/components/RoutePicker';
 import WorldVerificationTest from '@/components/WorldVerificationTest';
 
@@ -65,15 +66,37 @@ function Step({ index, title, state, summary, children }: {
   index: number; title: string; state: 'done' | 'current' | 'locked'; summary?: string; children?: ReactNode;
 }) {
   return (
-    <View style={[styles.step, state === 'current' && styles.stepCurrent]}>
+    <View style={[styles.step, state === 'current' && styles.stepCurrent, state === 'done' && styles.stepDone]}>
       <View style={styles.stepHeader}>
-        <View style={[styles.stepBadge, state === 'done' && styles.stepBadgeDone, state === 'current' && styles.stepBadgeCurrent]}>
-          <Text style={[styles.stepBadgeText, state !== 'locked' && styles.stepBadgeTextOn]}>{state === 'done' ? '✓' : index}</Text>
+        <Text style={[styles.stepNumber, state === 'current' && styles.stepNumberCurrent, state === 'done' && styles.stepNumberDone]}>
+          {state === 'done' ? '✓' : index.toString().padStart(2, '0')}
+        </Text>
+        <View style={styles.flex}>
+          <Text style={[styles.stepTitle, state === 'locked' && styles.stepTitleLocked]}>{title}</Text>
+          {summary ? <Text style={styles.stepSummary}>{summary}</Text> : null}
         </View>
-        <Text style={[styles.stepTitle, state === 'locked' && styles.stepTitleLocked]}>{title}</Text>
       </View>
-      {summary ? <Text style={styles.stepSummary}>{summary}</Text> : null}
       {state === 'current' && children ? <View style={styles.stepBody}>{children}</View> : null}
+    </View>
+  );
+}
+
+/** A race bib: the runner's handle, their side, and their start-line checklist. */
+function Bib({ handle, side, checks }: { handle: string; side: 'you' | 'rival'; checks: { label: string; done: boolean }[] }) {
+  return (
+    <View style={styles.bib}>
+      <View style={[styles.bibStrip, side === 'rival' && styles.bibStripRival]}>
+        <Text style={styles.bibStripText}>{side === 'you' ? 'YOU' : 'RIVAL'}</Text>
+      </View>
+      {[styles.pinTopLeft, styles.pinTopRight, styles.pinBottomLeft, styles.pinBottomRight].map((position, index) => (
+        <View key={index} style={[styles.pin, position]} />
+      ))}
+      <Text numberOfLines={1} adjustsFontSizeToFit style={styles.bibHandle}>@{handle}</Text>
+      <View style={styles.bibChecks}>
+        {checks.map((check) => (
+          <Text key={check.label} style={[styles.bibCheck, check.done && styles.bibCheckDone]}>{check.done ? '●' : '○'} {check.label}</Text>
+        ))}
+      </View>
     </View>
   );
 }
@@ -249,11 +272,14 @@ export default function RaceFlow({
           ) : (
             <>
               <Text style={styles.eyebrow}>FRIEND RACE · {distanceKm} KM</Text>
-              <Text accessibilityRole="header" style={styles.title}>Invite your rival.</Text>
+              <Text accessibilityRole="header" style={styles.title}>Call out your rival.</Text>
               {inviteCode ? (
                 <View style={styles.codeCard}>
-                  <Text style={styles.codeLabel}>INVITE CODE · EXPIRES IN 10 MIN</Text>
+                  <View style={styles.ticketNotchLeft} />
+                  <View style={styles.ticketNotchRight} />
+                  <Text style={styles.codeLabel}>RACE ENTRY CODE · VALID 10 MIN</Text>
                   <Text accessibilityLabel={`Invite code ${inviteCode}`} selectable style={styles.code}>{inviteCode}</Text>
+                  <View style={styles.ticketRule} />
                   <Pressable accessibilityRole="button" onPress={() => void Share.share({ message: `Join my ${distanceKm} km Rivalry race: rivalry:///?invite=${inviteCode}` })} style={styles.secondaryButton}>
                     <Text style={styles.secondaryButtonLabel}>Share invite link</Text>
                   </Pressable>
@@ -265,14 +291,20 @@ export default function RaceFlow({
           )
         ) : (
           <>
-            <Text style={styles.eyebrow}>{strangers ? 'VERIFIED STRANGER RACE' : 'FRIEND RACE'} · {distanceKm} KM</Text>
-            <Text accessibilityRole="header" style={styles.title}>You vs @{opponent?.handle ?? 'runner'}</Text>
-            <View style={styles.opponentRow}>
-              {strangers ? <Text style={[styles.chip, opponent?.selfieVerified && styles.chipOn]}>{opponent?.selfieVerified ? '✓ ' : ''}SELFIE</Text> : null}
-              <Text style={[styles.chip, opponent?.routeAccepted && styles.chipOn]}>{opponent?.routeAccepted ? '✓ ' : ''}ROUTE</Text>
-              <Text style={[styles.chip, opponent?.startReady && styles.chipOn]}>{opponent?.startReady ? '✓ ' : ''}READY</Text>
-              <Text style={styles.chipCaption}>@{opponent?.handle ?? 'runner'}</Text>
+            <Text style={styles.eyebrow}>{strangers ? 'VERIFIED OPEN MATCH' : 'FRIEND RACE'} · {distanceKm} KM</Text>
+            <View accessible accessibilityLabel={`You versus @${opponent?.handle ?? 'runner'}`} style={styles.matchup}>
+              <Bib handle={self?.handle ?? selfHandle} side="you" checks={[
+                ...(strangers ? [{ label: 'SELFIE', done: selfieDone }] : []),
+                { label: 'ROUTE', done: routeDone }, { label: 'READY', done: readyDone },
+              ]} />
+              <Text style={styles.versus}>vs</Text>
+              <Bib handle={opponent?.handle ?? 'runner'} side="rival" checks={[
+                ...(strangers ? [{ label: 'SELFIE', done: Boolean(opponent?.selfieVerified) }] : []),
+                { label: 'ROUTE', done: Boolean(opponent?.routeAccepted) }, { label: 'READY', done: Boolean(opponent?.startReady) },
+              ]} />
             </View>
+            <Text style={styles.stakes}>{distanceKm} KM · SAME START TIME · FASTEST VERIFIED TIME WINS</Text>
+            <Text style={styles.checklistLabel}>START LINE CHECKLIST</Text>
 
             {strangers ? (
               <Step index={++stepNumber} title="Selfie Check" state={selfieDone ? 'done' : 'current'}
@@ -288,18 +320,16 @@ export default function RaceFlow({
               <RoutePicker embedded raceId={raceId} mode={mode} getAccessToken={getAccessToken} onAccepted={() => void refresh()} />
             </Step>
 
-            <Step index={++stepNumber} title="I’m at my start" state={readyDone ? 'done' : routeDone ? 'current' : 'locked'}
-              summary={readyDone ? `Confirmed. ${opponent?.startReady ? 'Starting…' : `Waiting for @${opponent?.handle ?? 'runner'} to confirm.`}`
-                : !routeDone ? 'Unlocks after you accept your route.'
-                  : !bothRoutes ? `Waiting for @${opponent?.handle ?? 'runner'} to accept their route.` : 'Stand at your start pin, then confirm. The countdown begins when you’re both ready.'}>
-              <Pressable accessibilityRole="button" disabled={busy !== null || !bothRoutes} onPress={() => void setReady(true)}
-                style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, (busy !== null || !bothRoutes) && styles.disabled]}>
-                {busy === 'ready' ? <ActivityIndicator color={colors.white} /> : <Text style={styles.primaryButtonLabel}>I’m at my start · ready</Text>}
-              </Pressable>
+            <Step index={++stepNumber} title="On the start line" state={readyDone ? 'done' : routeDone ? 'current' : 'locked'}
+              summary={readyDone ? `Locked in. ${opponent?.startReady ? 'Starting…' : `Waiting for @${opponent?.handle ?? 'runner'}.`}`
+                : !routeDone ? 'Unlocks after you accept your route.' : 'Get to your start pin, then hit READY.'}>
+              <ReadyStep raceId={raceId} getAccessToken={getAccessToken} canConfirm={bothRoutes} busy={busy === 'ready'}
+                waitingCopy={`Waiting for @${opponent?.handle ?? 'runner'} to accept their route.`}
+                onReady={() => void setReady(true)} />
             </Step>
             {readyDone && status.status === 'ready' ? (
               <Pressable accessibilityRole="button" disabled={busy !== null} onPress={() => void setReady(false)} style={styles.textButton}>
-                <Text style={styles.textButtonLabel}>Cancel my start confirmation</Text>
+                <Text style={styles.textButtonLabel}>Not ready yet · undo</Text>
               </Pressable>
             ) : null}
           </>
@@ -331,27 +361,43 @@ const styles = StyleSheet.create({
   eyebrow: { color: colors.vermilion, fontSize: 10, fontWeight: '900', letterSpacing: 1.5, marginBottom: 9 },
   title: { color: colors.ink, fontFamily: 'serif', fontSize: 36, lineHeight: 41, letterSpacing: -1 },
   copy: { color: colors.muted, fontSize: 14, lineHeight: 21, marginTop: 8, textAlign: 'center' },
-  codeCard: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 18, marginTop: 22, alignItems: 'center' },
-  codeLabel: { color: colors.vermilion, fontSize: 9, fontWeight: '900', letterSpacing: 1.2 },
-  code: { color: colors.ink, fontSize: 44, fontWeight: '900', letterSpacing: 8, marginVertical: 10 },
+  codeCard: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 18, marginTop: 22, alignItems: 'center', overflow: 'hidden' },
+  ticketNotchLeft: { position: 'absolute', left: -11, top: '50%', width: 22, height: 22, borderRadius: 11, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line },
+  ticketNotchRight: { position: 'absolute', right: -11, top: '50%', width: 22, height: 22, borderRadius: 11, backgroundColor: colors.paper, borderWidth: 1, borderColor: colors.line },
+  ticketRule: { alignSelf: 'stretch', borderTopWidth: 1, borderStyle: 'dashed', borderColor: colors.line, marginBottom: 14 },
+  codeLabel: { color: colors.vermilion, fontSize: 9, fontWeight: '900', letterSpacing: 1.4 },
+  code: { color: colors.ink, fontFamily: 'serif', fontSize: 58, fontWeight: '700', letterSpacing: 10, marginVertical: 8 },
+  flex: { flex: 1 },
+  matchup: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
+  versus: { color: colors.vermilion, fontFamily: 'serif', fontStyle: 'italic', fontSize: 26, marginHorizontal: 8 },
+  bib: { flex: 1, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, paddingBottom: 12, alignItems: 'center' },
+  bibStrip: { alignSelf: 'stretch', backgroundColor: colors.vermilion, paddingVertical: 5, alignItems: 'center' },
+  bibStripRival: { backgroundColor: colors.ink },
+  bibStripText: { color: colors.white, fontSize: 10, fontWeight: '900', letterSpacing: 2.4 },
+  pin: { position: 'absolute', width: 7, height: 7, borderRadius: 4, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.paper },
+  pinTopLeft: { left: 7, top: 30 },
+  pinTopRight: { right: 7, top: 30 },
+  pinBottomLeft: { left: 7, bottom: 7 },
+  pinBottomRight: { right: 7, bottom: 7 },
+  bibHandle: { color: colors.ink, fontFamily: 'serif', fontSize: 22, fontWeight: '700', marginTop: 14, paddingHorizontal: 16 },
+  bibChecks: { marginTop: 9, gap: 3, alignItems: 'flex-start' },
+  bibCheck: { color: colors.muted, fontSize: 9, fontWeight: '800', letterSpacing: 1 },
+  bibCheckDone: { color: colors.green },
+  stakes: { color: colors.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1.3, textAlign: 'center', marginTop: 12 },
+  checklistLabel: { color: colors.ink, fontSize: 10, fontWeight: '900', letterSpacing: 1.8, marginTop: 24, marginBottom: 9, borderBottomWidth: 2, borderBottomColor: colors.ink, paddingBottom: 6 },
   searchStage: { height: 170, alignItems: 'center', justifyContent: 'center' },
   searchRing: { position: 'absolute', width: 120, height: 120, borderRadius: 60, borderWidth: 3, borderColor: colors.vermilion },
   searchDot: { width: 22, height: 22, borderRadius: 11, backgroundColor: colors.vermilion },
-  opponentRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 12, marginBottom: 18 },
-  chip: { color: colors.muted, fontSize: 9, fontWeight: '900', letterSpacing: 1, borderWidth: 1, borderColor: colors.line, paddingHorizontal: 8, paddingVertical: 5 },
-  chipOn: { color: colors.white, backgroundColor: colors.green, borderColor: colors.green },
-  chipCaption: { color: colors.muted, fontSize: 11, marginLeft: 2 },
-  step: { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, padding: 15, marginBottom: 10 },
-  stepCurrent: { borderColor: colors.vermilion, borderWidth: 2, padding: 14 },
-  stepHeader: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  stepBadge: { width: 28, height: 28, borderRadius: 14, borderWidth: 1, borderColor: colors.line, alignItems: 'center', justifyContent: 'center' },
-  stepBadgeDone: { backgroundColor: colors.green, borderColor: colors.green },
-  stepBadgeCurrent: { backgroundColor: colors.vermilion, borderColor: colors.vermilion },
-  stepBadgeText: { color: colors.muted, fontSize: 12, fontWeight: '900' },
-  stepBadgeTextOn: { color: colors.white },
-  stepTitle: { color: colors.ink, fontFamily: 'serif', fontSize: 21 },
+  step: { borderBottomWidth: 1, borderBottomColor: colors.line, paddingVertical: 14 },
+  stepCurrent: { backgroundColor: colors.white, borderLeftWidth: 4, borderLeftColor: colors.vermilion, paddingHorizontal: 12, borderBottomColor: 'transparent', marginVertical: 4 },
+  stepDone: { opacity: 0.85 },
+  stepHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
+  stepNumber: { width: 34, color: colors.line, fontFamily: 'serif', fontSize: 24, fontWeight: '700', lineHeight: 28 },
+  stepNumberCurrent: { color: colors.vermilion },
+  stepNumberDone: { color: colors.green },
+  stepTitle: { color: colors.ink, fontFamily: 'serif', fontSize: 21, lineHeight: 28 },
   stepTitleLocked: { color: colors.muted },
-  stepSummary: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 8, marginLeft: 39 },
+  stepSummary: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 3 },
   stepBody: { marginTop: 14 },
   primaryButton: { minHeight: 52, backgroundColor: colors.vermilion, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
   primaryButtonLabel: { color: colors.white, fontSize: 14, fontWeight: '800' },
