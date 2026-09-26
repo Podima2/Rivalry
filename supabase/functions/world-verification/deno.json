@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.57.4",
+    "@worldcoin/idkit-core/hashing": "npm:@worldcoin/idkit-core@4.3.0/hashing",
+    "@worldcoin/idkit-core/signing": "npm:@worldcoin/idkit-core@4.3.0/signing"
+  }
+}

@@ -18,16 +18,17 @@ This section separates product decisions supplied by the project owner from impl
 - **Accounts and naming:** Use email login, Privy embedded wallets, and a unique public handle chosen during onboarding that resolves to the wallet through an ENS subdomain.
 - **Backend and chain:** Use Supabase/Postgres with server functions and a project-owned `.eth` parent on Sepolia, such as `rivalry.eth`.
 - **Budget and milestone:** Use free service tiers. The initial success target is local Expo development builds running on physical iPhone and Android devices, with no app store release. Update free Xcode to 26.4+ before the iPhone build.
-- **Demo:** Run two accounts on the owner’s Android and iPhone. Use World’s staging/simulator for selfie checks and a clearly labeled demo-only ID tier if the simulator cannot issue Official ID proofs.
+- **Demo:** Run two accounts on the owner’s Android and iPhone. Use World ID Sandbox for Selfie Check and passport/NFC credential flows; label Sandbox outcomes as simulated and never as production verification.
 
 ### AI-proposed implementation choices
 
 These are implementation recommendations from the planning phase, rather than independently stated requirements:
 
-- Build a TypeScript Expo app with native IDKit integration for mobile verification flows.
+- Build a TypeScript Expo app with IDKit integration for the native World ID app handoff and mobile verification flow.
 - Use Supabase/Postgres for profiles, handles, invitations, matching, race state, and summaries; use Realtime for race updates, server functions for service coordination, and row-level security for data access.
 - Keep World signing keys, provider credentials, and ENS registrar signing secrets on the server. Verify World proofs server-side and retain verification outcomes rather than selfie images or ID documents.
 - Give friend invite codes a 48-hour lifetime and create or redeem each code atomically, preventing more than two runners from joining one race.
+- Keep the ORS key in Supabase. Allow runners to regenerate routes during review, while showing provider quota errors if the hosted free tier is exhausted.
 - Use openrouteservice’s hosted free routing tier. Its foot-route distance cap informed the selected workaround: generate a 5 km loop and run it twice for a 10 km race.
 - Provide setup documentation and an example environment file. Keep actual credentials out of source control.
 - Test core flows on both physical devices, including route acceptance, verification gates, opponent visibility, GPS loss, DNF handling, and deletion of precise tracks after results finalize.
@@ -61,13 +62,13 @@ These are implementation recommendations from the planning phase, rather than in
 
 - **Every stranger race:** Require a fresh World Selfie Check after both runners are matched and ready, before the countdown.
 - **10 km stranger races:** Additionally require a World Official ID credential proof before the countdown. The credential proves possession of a supported government ID credential without revealing the document or legal identity.
-- **Demo environment:** Use World staging/simulator for selfie verification. If it cannot issue Official ID proofs, use a conspicuously labeled demo-only ID tier for the two-device demonstration; never represent this demo result as production verification.
+- **Demo environment:** Use World ID Sandbox on physical devices. Sandbox proofs are simulated and must never be presented as production verification. Test the passport/NFC credential flow separately; if the Sandbox cannot issue it, label that 10 km tier as demo-only.
 
 ### Device and service setup
 
 - Follow the Android build notes in `learningsfortokyo.md`, including explicit Java/Android SDK environment setup where needed.
 - Upgrade Xcode to 26.4+ before producing the iOS development build; the notes report that Xcode 26.2 blocked the earlier SDK 57 build.
-- Configure Privy, Supabase, World ID, route-provider, and ENS testnet settings through local/server environment configuration. Document required dashboard setup and keep secrets server-side.
+- Configure Privy, Supabase, World ID, route-provider, and ENS testnet settings through local/server environment configuration. Keep the World RP signing key and all other server secrets in Supabase Function Secrets.
 
 ## Acceptance scenarios
 
@@ -76,7 +77,7 @@ These are implementation recommendations from the planning phase, rather than in
 - Complete a stranger race and verify a fresh Selfie Check is required before the countdown; the opponent sees progression but no location.
 - Attempt a 10 km stranger race and verify that the Official ID credential tier is also required before the countdown.
 - Decline or fail stranger verification and confirm the match is canceled and the other runner returns to the queue.
-- Run a two-account demo on the owner’s physical Android and iPhone, clearly distinguishing simulated verification from production proof.
+- Run the World ID Sandbox handoff on the owner’s physical Android and iPhone, clearly distinguishing simulated verification from production proof.
 - Simulate GPS loss and route deviation; confirm the clock continues, warnings appear, rejoining is allowed, and unverifiable results are invalid.
 - Quit a stranger race after starting and confirm the opponent’s summary shows DNF.
 - Finalize a race and confirm precise location samples are deleted while the race summary remains.

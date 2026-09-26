@@ -39,8 +39,9 @@ create table if not exists public.race_participants (
     check (state in ('invited', 'accepted', 'declined', 'ready', 'running', 'finished', 'dnf')),
   route_accepted_at timestamptz,
   route_distance_m integer check (route_distance_m is null or route_distance_m > 0),
+  route_generation_count smallint not null default 0 check (route_generation_count between 0 and 5),
   elevation_gain_m numeric(8,2) check (elevation_gain_m is null or elevation_gain_m >= 0),
-  route_polyline text,
+  route_coordinates jsonb,
   route_elevation_profile jsonb,
   start_latitude double precision check (start_latitude is null or start_latitude between -90 and 90),
   start_longitude double precision check (start_longitude is null or start_longitude between -180 and 180),
@@ -133,7 +134,7 @@ create or replace function public.create_friend_race(
 returns uuid
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $$
 declare
   created_race_id uuid;
@@ -160,7 +161,7 @@ create or replace function public.join_friend_race(
 returns uuid
 language plpgsql
 security definer
-set search_path = public, pg_temp
+set search_path = pg_catalog, public, pg_temp
 as $$
 declare
   target_race_id uuid;
@@ -206,3 +207,86 @@ revoke all on function public.create_friend_race(uuid, smallint, text) from publ
 revoke all on function public.join_friend_race(uuid, text) from public, anon, authenticated;
 grant execute on function public.create_friend_race(uuid, smallint, text) to service_role;
 grant execute on function public.join_friend_race(uuid, text) to service_role;
+
+create or replace function public.claim_route_preview_generation(
+  p_race_id uuid,
+  p_profile_id uuid
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  claimed boolean;
+begin
+  update public.race_participants
+  set route_generation_count = route_generation_count + 1
+  where race_id = p_race_id
+    and profile_id = p_profile_id
+    and route_generation_count < 5;
+
+  claimed := found;
+  return claimed;
+end;
+$$;
+
+revoke all on function public.claim_route_preview_generation(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.claim_route_preview_generation(uuid, uuid) to service_role;
+
+-- Route decisions are serialized on the race row so both acceptances move the
+-- race to ready exactly once, even when the two phones accept together.
+create or replace function public.accept_friend_race_route(
+  p_race_id uuid,
+  p_profile_id uuid
+)
+returns text
+language plpgsql
+security definer
+set search_path = pg_catalog, public, pg_temp
+as $$
+declare
+  current_status text;
+  accepted_count integer;
+begin
+  select status into current_status
+  from public.races
+  where id = p_race_id and mode = 'friends'
+  for update;
+
+  if current_status is null then
+    raise exception using errcode = 'P0001', message = 'race_unavailable';
+  end if;
+
+  if current_status not in ('route_review', 'ready') then
+    raise exception using errcode = 'P0001', message = 'race_not_in_route_review';
+  end if;
+
+  update public.race_participants
+  set route_accepted_at = coalesce(route_accepted_at, now()), updated_at = now()
+  where race_id = p_race_id
+    and profile_id = p_profile_id
+    and route_coordinates is not null
+    and route_distance_m is not null;
+
+  if not found then
+    if not exists (select 1 from public.race_participants where race_id = p_race_id and profile_id = p_profile_id) then
+      raise exception using errcode = 'P0001', message = 'not_a_participant';
+    end if;
+    raise exception using errcode = 'P0001', message = 'route_missing';
+  end if;
+
+  select count(*) into accepted_count
+  from public.race_participants
+  where race_id = p_race_id and route_accepted_at is not null;
+
+  if accepted_count = 2 then
+    update public.races set status = 'ready' where id = p_race_id;
+    return 'ready';
+  end if;
+  return 'route_review';
+end;
+$$;
+
+revoke all on function public.accept_friend_race_route(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.accept_friend_race_route(uuid, uuid) to service_role;

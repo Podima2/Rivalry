@@ -29,7 +29,13 @@
       "expo-status-bar",
       "expo-dev-client",
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Rivalry to use your location to create your route and track progress during an active race. Friends can see your live race position."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

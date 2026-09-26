@@ -5,12 +5,14 @@
   "dependencies": {
     "@ethersproject/shims": "^5.8.0",
     "@privy-io/expo": "^0.74.3",
+    "@worldcoin/idkit-core": "^4.3.0",
     "expo": "~57.0.25",
     "expo-application": "~57.0.3",
     "expo-constants": "~57.0.19",
     "expo-crypto": "~57.0.3",
     "expo-dev-client": "~57.0.19",
     "expo-linking": "~57.0.11",
+    "expo-location": "~57.0.20",
     "expo-router": "~57.0.23",
     "expo-secure-store": "~57.0.4",
     "expo-status-bar": "~57.0.1",
@@ -20,6 +22,8 @@
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
     "react-native-get-random-values": "~1.11.0",
+    "react-native-maps": "1.27.2",
+    "react-native-quick-crypto": "^1.1.7",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.0",
     "react-native-web": "^0.21.2",
@@ -27,11 +31,13 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
+    "babel-preset-expo": "~57.0.13",
     "eslint": "^9.0.0",
     "eslint-config-expo": "~57.0.2",
     "typescript": "~6.0.3"
   },
   "scripts": {
+    "postinstall": "node scripts/patch-expo-modules-jsi.js",
     "start": "expo start --dev-client",
     "android": "expo run:android --device",
     "ios": "expo run:ios --device",

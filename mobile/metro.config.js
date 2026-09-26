@@ -3,6 +3,7 @@ const path = require('node:path');
 
 const config = getDefaultConfig(__dirname);
 config.resolver.unstable_conditionNames = ['browser'];
+config.resolver.assetExts.push('wasm');
 
 // Privy's published package map is not recognized correctly by this Metro
 // version. Point directly at its ESM entry while retaining package exports for

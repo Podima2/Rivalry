@@ -5,3 +5,15 @@ verify_jwt = false
 
 [functions.friend-races]
 verify_jwt = false
+
+[functions.route-preview]
+verify_jwt = false
+
+[functions.world-verification]
+verify_jwt = false
+
+[functions.race-progress]
+verify_jwt = false
+
+[functions.stranger-races]
+verify_jwt = false
