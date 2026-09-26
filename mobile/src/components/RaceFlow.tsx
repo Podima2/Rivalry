@@ -308,7 +308,7 @@ export default function RaceFlow({
 
             {strangers ? (
               <Step index={++stepNumber} title="Selfie Check" state={selfieDone ? 'done' : 'current'}
-                summary={selfieDone ? 'Verified for this race · World ID Sandbox (simulated)'
+                summary={selfieDone ? 'Verified for this race with World ID'
                   : deadlineLeft !== null ? `${formatClock(deadlineLeft)} left to verify, or this match is cancelled.` : undefined}>
                 <WorldVerificationTest embedded raceId={raceId} getAccessToken={getAccessToken} onVerified={() => void refresh()} />
               </Step>
