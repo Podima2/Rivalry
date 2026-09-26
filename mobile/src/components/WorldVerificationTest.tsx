@@ -155,7 +155,6 @@ export default function WorldVerificationTest({ getAccessToken, onBack, raceId, 
         <Pressable accessibilityRole="button" disabled={busy} onPress={() => void runCheck()} style={[styles.button, busy && styles.disabled]}>
           {busy ? <ActivityIndicator color={colors.white} /> : <Text style={styles.buttonText}>{raceId ? 'Verify with Selfie Check' : 'Try Selfie Check'}</Text>}
         </Pressable>
-        <Text style={styles.sandboxNote}>World ID Sandbox · simulated verification, not a production proof.</Text>
       </View>
       {notice ? <Text accessibilityLiveRegion="polite" style={styles.status}>{notice}</Text> : null}
       {error ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text> : null}
@@ -216,7 +215,6 @@ const styles = StyleSheet.create({
   button: { minHeight: 50, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ink, paddingHorizontal: 16 },
   disabled: { opacity: 0.55 },
   buttonText: { color: colors.white, fontWeight: '800', fontSize: 14 },
-  sandboxNote: { color: colors.muted, fontSize: 10, fontWeight: '700', letterSpacing: 0.4, marginTop: 9, textAlign: 'center' },
   status: { color: colors.ink, fontSize: 13, lineHeight: 19, marginTop: 10 },
   error: { color: colors.red, fontSize: 13, lineHeight: 19, marginTop: 10 },
   runtime: { position: 'absolute', left: 0, top: 0, width: 1, height: 1, opacity: 0 },
